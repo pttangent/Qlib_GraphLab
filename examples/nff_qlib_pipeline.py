@@ -33,9 +33,7 @@ def _rank_ic(prediction: pd.Series, label: pd.Series) -> pd.Series:
     if aligned.empty:
         return pd.Series(dtype="float64")
     return aligned.groupby(level="datetime").apply(
-        lambda frame: frame["score"].corr(frame["label"], method="spearman")
-        if len(frame) >= 2
-        else float("nan")
+        lambda frame: frame["score"].corr(frame["label"], method="spearman") if len(frame) >= 2 else float("nan")
     )
 
 
@@ -81,18 +79,12 @@ def run(args: argparse.Namespace) -> None:
             "rank_ic_positive_ratio": None if ic.dropna().empty else float((ic > 0).mean()),
             "loader_report": handler.data_loader.last_load_report,
         }
-        scalar_metrics = {
-            key: value
-            for key, value in metrics.items()
-            if key != "loader_report" and value is not None
-        }
+        scalar_metrics = {key: value for key, value in metrics.items() if key != "loader_report" and value is not None}
         if scalar_metrics:
             R.log_metrics(**scalar_metrics)
         R.save_objects(**{"model.pkl": model})
 
-    (output_dir / "metrics.json").write_text(
-        json.dumps(metrics, indent=2, default=str), encoding="utf-8"
-    )
+    (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2, default=str), encoding="utf-8")
     print(json.dumps(metrics, indent=2, default=str))
 
 

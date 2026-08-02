@@ -199,9 +199,7 @@ class NFFWarehouseCatalog:
         schemas = self.available_schemas(kind, dataset)
         if requested:
             if requested not in schemas:
-                raise FileNotFoundError(
-                    f"NFF source {kind}:{dataset} has no schema={requested}; available={schemas}"
-                )
+                raise FileNotFoundError(f"NFF source {kind}:{dataset} has no schema={requested}; available={schemas}")
             schema = requested
         else:
             if not schemas:
@@ -265,9 +263,7 @@ class NFFDataLoader(DataLoader):
     ):
         self.warehouse_root = Path(warehouse_root).expanduser().resolve()
         self.catalog = NFFWarehouseCatalog(self.warehouse_root)
-        self.sources = _build_source_specs("feature", feature_sets) + _build_source_specs(
-            "canonical", canonical_sets
-        )
+        self.sources = _build_source_specs("feature", feature_sets) + _build_source_specs("canonical", canonical_sets)
         if not self.sources:
             raise ValueError("At least one NFF feature_sets or canonical_sets source is required")
         output_names: List[str] = []
@@ -369,8 +365,7 @@ class NFFDataLoader(DataLoader):
 
         if not selected:
             raise FileNotFoundError(
-                f"No NFF partitions selected for {spec.name}:schema={schema}, "
-                f"start={start_time}, end={end_time}"
+                f"No NFF partitions selected for {spec.name}:schema={schema}, " f"start={start_time}, end={end_time}"
             )
 
         signatures: List[Tuple[Any, ...]] = []
@@ -597,16 +592,12 @@ class NFFDataLoader(DataLoader):
         source_frames: List[pd.DataFrame] = []
         source_reports: List[Dict[str, Any]] = []
         for spec in self.sources:
-            frame, report = self._read_source(
-                spec, start, end, selected_instruments, future_sessions=0
-            )
+            frame, report = self._read_source(spec, start, end, selected_instruments, future_sessions=0)
             source_frames.append(frame)
             source_reports.append(report)
         merged = self._merge_sources(source_frames)
         merged, collision_rows = self._apply_execution_clock(merged)
-        merged, label_report = self._attach_label(
-            merged, start, end, selected_instruments
-        )
+        merged, label_report = self._attach_label(merged, start, end, selected_instruments)
 
         if merged.empty:
             empty_index = pd.MultiIndex.from_arrays([[], []], names=["datetime", "instrument"])
