@@ -110,10 +110,17 @@ MultiIndex columns: feature, label
 
 ## Standard Qlib pipeline
 
+Qlib's model classes log training metrics through the Recorder. Initialize the framework and run model fitting inside `R.start()`; the provider URI may point to the existing NFF root because this adapter does not ask the native Qlib feature provider to read it.
+
 ```python
+import qlib
+from qlib.constant import REG_US
 from qlib.contrib.data.nff import NFFDataHandlerLP
 from qlib.data.dataset import DatasetH
 from qlib.contrib.model.gbdt import LGBModel
+from qlib.workflow import R
+
+qlib.init(provider_uri=WAREHOUSE_ROOT, region=REG_US)
 
 handler = NFFDataHandlerLP(
     warehouse_root=WAREHOUSE_ROOT,
@@ -140,10 +147,18 @@ dataset = DatasetH(
         "test": ("2026-07-11", "2026-07-31"),
     },
 )
-model = LGBModel(loss="mse", num_leaves=31, learning_rate=0.05, n_estimators=300)
-model.fit(dataset)
-prediction = model.predict(dataset, segment="test")
+model = LGBModel(
+    loss="mse",
+    num_leaves=31,
+    learning_rate=0.05,
+    num_boost_round=300,
+)
+with R.start(experiment_name="nff_three_month_screening"):
+    model.fit(dataset)
+    prediction = model.predict(dataset, segment="test")
 ```
+
+The complete executable version is `examples/nff_qlib_pipeline.py`; it saves predictions, labels, daily RankIC, summary metrics and the trained model.
 
 ## Performance properties
 
