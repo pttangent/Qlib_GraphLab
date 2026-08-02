@@ -1,0 +1,50 @@
+name: NFF import cleanup
+
+on:
+  push:
+    branches:
+      - agent/nff-direct-qlib-adapter
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/nff-direct-qlib-adapter
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Remove unused imports and format
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('qlib/contrib/data/nff.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('import json\nimport math\nfrom pathlib', 'import json\nfrom pathlib')
+          text = text.replace(
+              'from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union',
+              'from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union',
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+          python -m pip install black==24.8.0
+          black -l 120 qlib/contrib/data/nff.py
+      - name: Commit cleanup
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No cleanup changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add qlib/contrib/data/nff.py
+          git commit -m "style(nff): remove unused imports"
+          git push origin HEAD:agent/nff-direct-qlib-adapter
