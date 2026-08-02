@@ -2,6 +2,10 @@
 
 `qlib.contrib.data.nff` reads a governed NodeFactorFactory (NFF) warehouse directly. It does **not** create a second Qlib binary copy of the warehouse.
 
+For the current local `D:\DEV\AnotherNetworkFactory` warehouse inventory,
+raw-material locations, and run-readiness notes, see
+[`nff_local_status.md`](nff_local_status.md).
+
 ## Data path
 
 ```text
