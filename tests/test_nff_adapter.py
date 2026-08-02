@@ -130,13 +130,15 @@ def test_nff_loader_projects_sources_aligns_pit_and_builds_label(tmp_path: Path)
     assert ("feature", "minute_nvg__shape") in result.columns
     assert ("feature", "bars_1m__close") in result.columns
     assert ("feature", "unrequested_large_column") not in result.columns
-    assert result.index[0] == (pd.Timestamp("2026-01-05T14:32:00Z"), "AAPL")
+    assert result.index[0] == (pd.Timestamp("2026-01-05T14:32:00"), "AAPL")
     assert result.iloc[0][("feature", "minute_nvg__shape")] == pytest.approx(1.5)
     assert result.iloc[0][("feature", "bars_1m__close")] == pytest.approx(10.5)
     assert result.iloc[0][("label", "LABEL0")] == pytest.approx(14.0 / 12.0 - 1.0)
     assert result.dtypes.eq(np.dtype("float32")).all()
     assert loader.last_load_report["execution"]["delay_bars"] == 1
     assert loader.last_load_report["label"]["non_null_labels"] == 1
+    assert loader.last_load_report["label"]["same_session"] is True
+    assert loader.last_load_report["execution"]["qlib_datetime"] == "UTC-naive"
 
 
 def test_nff_loader_rejects_mixed_family_contracts(tmp_path: Path):
@@ -244,7 +246,7 @@ def test_nff_datahandler_lp_enters_standard_qlib_fetch(tmp_path: Path):
         loader_kwargs={"arrow_use_threads": False},
     )
     fetched = handler.fetch(
-        selector=slice("2026-01-05T14:32:00Z", "2026-01-05T14:32:00Z"),
+        selector=slice("2026-01-05T14:32:00", "2026-01-05T14:32:00"),
         level="datetime",
         col_set=["feature", "label"],
         data_key=DataHandlerLP.DK_L,

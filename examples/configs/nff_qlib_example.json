@@ -38,7 +38,8 @@
       "entry_column": "open",
       "exit_column": "open",
       "horizon_bars": 30,
-      "future_sessions": 5
+      "future_sessions": 5,
+      "same_session": true
     },
     "instruments": "all",
     "start_time": "2026-05-01T13:30:00Z",

@@ -96,6 +96,7 @@ class NFFForwardReturnLabel:
     exit_column: str = "open"
     horizon_bars: int = 30
     future_sessions: int = 5
+    same_session: bool = True
 
     def validate(self) -> None:
         if self.horizon_bars <= 0:
@@ -553,7 +554,7 @@ class NFFDataLoader(DataLoader):
             end_time,
             instruments,
             future_sessions=label.future_sessions,
-            extra_columns=(label.entry_column, label.exit_column),
+            extra_columns=("trade_date", label.entry_column, label.exit_column),
         )
         if bars.empty:
             frame[label.name] = np.nan
@@ -564,7 +565,12 @@ class NFFDataLoader(DataLoader):
         bars = bars.rename(columns={symbol_column: "__label_symbol"})
         bars = bars.drop(columns=[available_column], errors="ignore")
         bars = bars.sort_values(["symbol_id", "timestamp"], kind="mergesort")
-        exit_values = bars.groupby("symbol_id", sort=False)[label.exit_column].shift(-label.horizon_bars)
+        label_groups = ["symbol_id"]
+        if label.same_session:
+            if "trade_date" not in bars.columns:
+                raise KeyError("same-session labels require canonical trade_date")
+            label_groups.append("trade_date")
+        exit_values = bars.groupby(label_groups, sort=False)[label.exit_column].shift(-label.horizon_bars)
         entry_values = pd.to_numeric(bars[label.entry_column], errors="coerce")
         bars[label.name] = pd.to_numeric(exit_values, errors="coerce") / entry_values - 1.0
         labels = bars[["symbol_id", "timestamp", label.name]].rename(columns={"timestamp": "datetime"})
@@ -576,6 +582,7 @@ class NFFDataLoader(DataLoader):
                 "entry_column": label.entry_column,
                 "exit_column": label.exit_column,
                 "horizon_bars": label.horizon_bars,
+                "same_session": label.same_session,
                 "non_null_labels": int(frame[label.name].notna().sum()),
             }
         )
@@ -637,6 +644,11 @@ class NFFDataLoader(DataLoader):
                     converted = converted.astype("float32")
                 merged[column] = converted
 
+        # Qlib standard handlers and date-only DatasetH segments use a timezone-naive
+        # DatetimeIndex. Preserve UTC semantics while dropping only the timezone marker.
+        merged["datetime"] = (
+            pd.to_datetime(merged["datetime"], utc=True, errors="coerce").dt.tz_convert("UTC").dt.tz_localize(None)
+        )
         merged = merged.sort_values(["datetime", "instrument"], kind="mergesort")
         index = pd.MultiIndex.from_frame(merged[["datetime", "instrument"]])
         index.names = ["datetime", "instrument"]
@@ -661,6 +673,7 @@ class NFFDataLoader(DataLoader):
                 "delay_bars": self.execution.delay_bars,
                 "collision_policy": self.execution.collision_policy,
                 "collision_rows": collision_rows,
+                "qlib_datetime": "UTC-naive",
             },
             "sources": source_reports,
             "label": label_report,

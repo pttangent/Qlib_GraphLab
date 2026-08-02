@@ -21,7 +21,7 @@ The adapter deliberately separates three clocks:
 - `available_time`: when that NFF row is fully known;
 - Qlib `datetime`: the first configured decision point after all requested inputs are available.
 
-With the default minute policy, `datetime = ceil(max_available_time, 1min) + 1min`. A factor for the 10:00 bar that is available at 10:01 is therefore assigned to Qlib at 10:02.
+With the default minute policy, `datetime = ceil(max_available_time, 1min) + 1min`. A factor for the 10:00 bar that is available at 10:01 is therefore assigned to Qlib at 10:02. The returned Qlib index is UTC-naive, which preserves UTC values while remaining compatible with date-only `DatasetH` segments.
 
 ## Warehouse layout
 
@@ -89,6 +89,7 @@ loader = NFFDataLoader(
         "entry_column": "open",
         "exit_column": "open",
         "horizon_bars": 30,
+        "same_session": True,
     },
 )
 
@@ -127,7 +128,7 @@ handler = NFFDataHandlerLP(
     canonical_sets=CANONICAL_SETS,
     feature_sets=FEATURE_SETS,
     execution={"frequency": "1min", "delay_bars": 1},
-    label={"name": "LABEL0", "horizon_bars": 30},
+    label={"name": "LABEL0", "horizon_bars": 30, "same_session": True},
     instruments="all",
     start_time="2026-05-01T13:30:00Z",
     end_time="2026-07-31T20:00:00Z",
@@ -178,3 +179,4 @@ For three-month screening, run feature bundles of roughly 16–32 columns rather
 - Do not set `allow_mixed_contracts=True` for formal research unless the differences have been audited.
 - Missing values are left as missing; the adapter never turns `not_ready` or `not_observed` into zero.
 - Labels begin at Qlib decision time, not at the original NFF event timestamp.
+- Forward labels stay within the same `trade_date` by default; set `same_session=False` only for an explicitly overnight target.
