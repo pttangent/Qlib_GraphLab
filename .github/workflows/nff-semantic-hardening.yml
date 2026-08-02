@@ -1,0 +1,137 @@
+name: NFF semantic hardening
+
+on:
+  push:
+    branches:
+      - agent/nff-direct-qlib-adapter
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/nff-direct-qlib-adapter
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply PIT time hardening
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          adapter = Path('qlib/contrib/data/nff.py')
+          text = adapter.read_text(encoding='utf-8')
+          text = text.replace(
+              '    horizon_bars: int = 30\n    future_sessions: int = 5\n',
+              '    horizon_bars: int = 30\n    future_sessions: int = 5\n    same_session: bool = True\n',
+          )
+          text = text.replace(
+              '            extra_columns=(label.entry_column, label.exit_column),\n',
+              '            extra_columns=("trade_date", label.entry_column, label.exit_column),\n',
+          )
+          text = text.replace(
+              '        bars = bars.sort_values(["symbol_id", "timestamp"], kind="mergesort")\n'
+              '        exit_values = bars.groupby("symbol_id", sort=False)[label.exit_column].shift(-label.horizon_bars)\n',
+              '        bars = bars.sort_values(["symbol_id", "timestamp"], kind="mergesort")\n'
+              '        label_groups = ["symbol_id"]\n'
+              '        if label.same_session:\n'
+              '            if "trade_date" not in bars.columns:\n'
+              '                raise KeyError("same-session labels require canonical trade_date")\n'
+              '            label_groups.append("trade_date")\n'
+              '        exit_values = bars.groupby(label_groups, sort=False)[label.exit_column].shift(-label.horizon_bars)\n',
+          )
+          text = text.replace(
+              '                "horizon_bars": label.horizon_bars,\n'
+              '                "non_null_labels": int(frame[label.name].notna().sum()),\n',
+              '                "horizon_bars": label.horizon_bars,\n'
+              '                "same_session": label.same_session,\n'
+              '                "non_null_labels": int(frame[label.name].notna().sum()),\n',
+          )
+          text = text.replace(
+              '        merged = merged.sort_values(["datetime", "instrument"], kind="mergesort")\n'
+              '        index = pd.MultiIndex.from_frame(merged[["datetime", "instrument"]])\n',
+              '        # Qlib standard handlers and date-only DatasetH segments use a timezone-naive\n'
+              '        # DatetimeIndex. Preserve UTC semantics while dropping only the timezone marker.\n'
+              '        merged["datetime"] = (\n'
+              '            pd.to_datetime(merged["datetime"], utc=True, errors="coerce")\n'
+              '            .dt.tz_convert("UTC")\n'
+              '            .dt.tz_localize(None)\n'
+              '        )\n'
+              '        merged = merged.sort_values(["datetime", "instrument"], kind="mergesort")\n'
+              '        index = pd.MultiIndex.from_frame(merged[["datetime", "instrument"]])\n',
+          )
+          text = text.replace(
+              '                "collision_rows": collision_rows,\n'
+              '            },\n',
+              '                "collision_rows": collision_rows,\n'
+              '                "qlib_datetime": "UTC-naive",\n'
+              '            },\n',
+              1,
+          )
+          adapter.write_text(text, encoding='utf-8')
+
+          test = Path('tests/test_nff_adapter.py')
+          test_text = test.read_text(encoding='utf-8')
+          test_text = test_text.replace(
+              'pd.Timestamp("2026-01-05T14:32:00Z")',
+              'pd.Timestamp("2026-01-05T14:32:00")',
+          )
+          test_text = test_text.replace(
+              'selector=slice("2026-01-05T14:32:00Z", "2026-01-05T14:32:00Z")',
+              'selector=slice("2026-01-05T14:32:00", "2026-01-05T14:32:00")',
+          )
+          test_text = test_text.replace(
+              '    assert loader.last_load_report["label"]["non_null_labels"] == 1\n',
+              '    assert loader.last_load_report["label"]["non_null_labels"] == 1\n'
+              '    assert loader.last_load_report["label"]["same_session"] is True\n'
+              '    assert loader.last_load_report["execution"]["qlib_datetime"] == "UTC-naive"\n',
+          )
+          test.write_text(test_text, encoding='utf-8')
+
+          config_path = Path('examples/configs/nff_qlib_example.json')
+          config = json.loads(config_path.read_text(encoding='utf-8'))
+          config['handler']['label']['same_session'] = True
+          config_path.write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
+
+          doc = Path('docs/component/nff_adapter.md')
+          doc_text = doc.read_text(encoding='utf-8')
+          doc_text = doc_text.replace(
+              'With the default minute policy, `datetime = ceil(max_available_time, 1min) + 1min`. A factor for the 10:00 bar that is available at 10:01 is therefore assigned to Qlib at 10:02.\n',
+              'With the default minute policy, `datetime = ceil(max_available_time, 1min) + 1min`. A factor for the 10:00 bar that is available at 10:01 is therefore assigned to Qlib at 10:02. The returned Qlib index is UTC-naive, which preserves UTC values while remaining compatible with date-only `DatasetH` segments.\n',
+          )
+          doc_text = doc_text.replace(
+              '        "horizon_bars": 30,\n',
+              '        "horizon_bars": 30,\n        "same_session": True,\n',
+          )
+          doc_text = doc_text.replace(
+              '    label={"name": "LABEL0", "horizon_bars": 30},\n',
+              '    label={"name": "LABEL0", "horizon_bars": 30, "same_session": True},\n',
+          )
+          doc_text = doc_text.replace(
+              '- Labels begin at Qlib decision time, not at the original NFF event timestamp.\n',
+              '- Labels begin at Qlib decision time, not at the original NFF event timestamp.\n- Forward labels stay within the same `trade_date` by default; set `same_session=False` only for an explicitly overnight target.\n',
+          )
+          doc.write_text(doc_text, encoding='utf-8')
+          PY
+          python -m pip install black==24.8.0
+          black -l 120 qlib/contrib/data/nff.py tests/test_nff_adapter.py examples/nff_qlib_pipeline.py
+      - name: Commit hardening
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No hardening changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add qlib/contrib/data/nff.py tests/test_nff_adapter.py examples/configs/nff_qlib_example.json docs/component/nff_adapter.md
+          git commit -m "fix(nff): harden Qlib time and session semantics"
+          git push origin HEAD:agent/nff-direct-qlib-adapter
