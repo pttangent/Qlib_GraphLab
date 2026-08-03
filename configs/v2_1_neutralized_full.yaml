@@ -1,5 +1,5 @@
 run:
-  name: v2_1_neutralized_full_20260803_dst_contract_sleeves_r6_groupresid_safe12
+  name: v2_1_neutralized_full_20260803_v2_2_incremental_vwap_gate
   script: nff_research/v2_1_neutralized_runner.py
   start_date: "2026-01-02"
   end_date: "2026-07-22"
@@ -34,9 +34,9 @@ labels:
 
 rank_ic_methods:
   - minute_mean_cs_rank_ic
-  - pooled_cs_rank_ic
+  - pooled_cs_demeaned_pct_rank_ic
   - minute_mean_cs_rank_ic_residualized
-  - pooled_cs_rank_ic_residualized
+  - pooled_cs_demeaned_pct_rank_ic_residualized
 
 universes:
   - own_feature_universe
@@ -73,9 +73,16 @@ neutralization:
 portfolio_proxy:
   rebalance_minutes: 15
   universe: liquid_common_adv20_top1000
-  construction: equal_weight_long_top_decile_short_bottom_decile
+  construction: equal_weight_long_short_variants
   cost_bps_per_turnover: 1.0
   accounting: same_sleeve_turnover
+  variants:
+    - long_high_q10_15m
+    - contrarian_q10_15m
+    - contrarian_q05_30m
+    - contrarian_q05_60m
+    - contrarian_q05_30m_hawkes_liquidity_gate
+  primary_execution_label: return_vwap_to_vwap
   note: "Proxy only; not a full Qlib Recorder/model backtest. Horizon H uses ceil(H/rebalance_minutes) sleeves and compares turnover only within the same sleeve."
 
 session:

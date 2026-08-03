@@ -88,6 +88,20 @@ CORE_DECILE_FEATURES = [
     "hawkes_derived__hawkes_effective_duration_norm",
 ]
 
+BUNDLE_MODEL_STEPS = [
+    ("traditional", {"TRAD"}),
+    ("traditional_plus_minute_nvg", {"TRAD", "MINUTE_NVG"}),
+    ("traditional_plus_minute_trade_nvg", {"TRAD", "MINUTE_NVG", "TRADE_NVG"}),
+    ("traditional_plus_minute_trade_hawkes", {"TRAD", "MINUTE_NVG", "TRADE_NVG", "HAWKES_LITE", "HAWKES_DERIVED"}),
+]
+
+BUNDLE_MODEL_LABELS = {
+    "return_open_to_open",
+    "return_vwap_to_vwap",
+    "realized_volatility",
+    "liquidity_deterioration",
+}
+
 REPRESENTATIVE_ALPHA_FEATURES = [
     "traditional__momentum_15m",
     "traditional__momentum_30m",
@@ -886,13 +900,15 @@ def _pooled_ic(
     feature_columns: list[str],
     min_n: int,
 ) -> dict[str, dict[str, float]]:
-    ranked_label = label.groupby(level="datetime", sort=False).rank(method="average")
+    ranked_label = label.groupby(level="datetime", sort=False).rank(method="average", pct=True)
+    ranked_label = ranked_label - ranked_label.groupby(level="datetime", sort=False).transform("mean")
     out: dict[str, dict[str, float]] = {}
     y = ranked_label.to_numpy(dtype="float64")
     ic_minutes = int(ranked_label.groupby(level="datetime", sort=False).count().ge(min_n).sum())
     for start in range(0, len(feature_columns), 24):
         chunk = feature_columns[start : start + 24]
-        ranked_features = feature_frame[chunk].groupby(level="datetime", sort=False).rank(method="average")
+        ranked_features = feature_frame[chunk].groupby(level="datetime", sort=False).rank(method="average", pct=True)
+        ranked_features = ranked_features - ranked_features.groupby(level="datetime", sort=False).transform("mean")
         for feature in chunk:
             value, n = _corr(ranked_features[feature].to_numpy(dtype="float64"), y)
             if n < min_n:
@@ -1032,7 +1048,7 @@ def minute_rank_ic_summary(
                 trade_date,
                 universe,
                 "raw",
-                "pooled_cs_rank_ic",
+                "pooled_cs_demeaned_pct_rank_ic",
                 family,
                 horizon,
                 coverage,
@@ -1050,7 +1066,7 @@ def minute_rank_ic_summary(
             neut_pooled_stats = _pooled_ic(feature_resid, label_resid, neutral_features, min_n=min_n)
             neutral_label_non_null = int(label_resid.notna().sum())
             neutral_coverage = feature_resid.notna().sum(axis=0) / max(1, neutral_label_non_null)
-            if family == "return_open_to_open" and decile_cache_features:
+            if family in {"return_open_to_open", "return_vwap_to_vwap"} and decile_cache_features:
                 cache_columns = [column for column in decile_cache_features if column in feature_resid.columns]
                 if cache_columns:
                     residual_cache[(universe, label_column)] = (
@@ -1075,7 +1091,7 @@ def minute_rank_ic_summary(
                 trade_date,
                 universe,
                 "neutralized",
-                "pooled_cs_rank_ic_residualized",
+                "pooled_cs_demeaned_pct_rank_ic_residualized",
                 family,
                 horizon,
                 neutral_coverage,
@@ -1111,7 +1127,11 @@ def decile_curves(
         return pd.DataFrame()
     for universe in ["liquid_common_adv20_top1000", "common_structural"]:
         universe_mask = masks[universe]
-        for label_column in [c for c in labels.columns if c.startswith("return_open_to_open__h")]:
+        for label_column in [
+            c
+            for c in labels.columns
+            if c.startswith("return_open_to_open__h") or c.startswith("return_vwap_to_vwap__h")
+        ]:
             family, horizon_text = label_column.rsplit("__h", 1)
             horizon = int(horizon_text)
             base_mask = (universe_mask & labels[label_column].notna() & label_masks[label_column].fillna(False)).fillna(False)
@@ -1204,13 +1224,133 @@ def decile_curves(
     )
 
 
-def _portfolio_weights(block: pd.DataFrame, feature: str) -> pd.Series:
-    ranked = block[feature].rank(method="first")
+def _ridge_fit_predict(x: np.ndarray, y: np.ndarray, alpha: float = 1e-3) -> tuple[np.ndarray, int, float]:
+    valid = np.isfinite(y) & np.isfinite(x).all(axis=1)
+    n = int(valid.sum())
+    pred = np.full(y.shape[0], np.nan, dtype="float64")
+    if n < 40:
+        return pred, n, math.nan
+    xv = x[valid].astype("float64")
+    yv = y[valid].astype("float64")
+    mean = xv.mean(axis=0)
+    std = xv.std(axis=0)
+    std[std <= 1e-12] = 1.0
+    xs = (xv - mean) / std
+    design = np.column_stack([np.ones(xs.shape[0]), xs])
+    penalty = np.eye(design.shape[1], dtype="float64") * alpha
+    penalty[0, 0] = 0.0
     try:
-        bucket = pd.qcut(ranked, 10, labels=False) + 1
+        coef = np.linalg.solve(design.T @ design + penalty, design.T @ yv)
+    except np.linalg.LinAlgError:
+        return pred, n, math.nan
+    pred_valid = design @ coef
+    pred[valid] = pred_valid
+    denom = float(((yv - yv.mean()) ** 2).sum())
+    r2 = 1.0 - float(((yv - pred_valid) ** 2).sum()) / denom if denom > 0 else math.nan
+    return pred, n, r2
+
+
+def bundle_incremental_model_screen(
+    features: pd.DataFrame,
+    labels: pd.DataFrame,
+    label_masks: dict[str, pd.Series],
+    controls: pd.DataFrame,
+    trade_date: str,
+    min_n: int,
+) -> pd.DataFrame:
+    feature_columns = analysis_features(features)
+    bundle_columns = {
+        step: [column for column in feature_columns if infer_bundle(column) in bundles]
+        for step, bundles in BUNDLE_MODEL_STEPS
+    }
+    masks = universe_masks(features, controls)
+    universe = "liquid_common_adv20_top1000"
+    universe_mask = masks[universe]
+    rows: list[dict[str, Any]] = []
+    for label_column in labels.columns:
+        family, horizon_text = label_column.rsplit("__h", 1)
+        if family not in BUNDLE_MODEL_LABELS:
+            continue
+        horizon = int(horizon_text)
+        base_mask = (universe_mask & labels[label_column].notna() & label_masks[label_column].fillna(False)).fillna(False)
+        if int(base_mask.sum()) < min_n:
+            continue
+        needed = sorted({column for columns in bundle_columns.values() for column in columns})
+        if not needed:
+            continue
+        work = pd.concat([features.loc[base_mask, needed], labels.loc[base_mask, label_column].rename("label")], axis=1)
+        minutes = work.index.get_level_values("datetime").minute
+        work = work.loc[(minutes % 15) == 0]
+        if work.empty:
+            continue
+        previous_pred: pd.Series | None = None
+        previous_step: str | None = None
+        for step, _ in BUNDLE_MODEL_STEPS:
+            columns = bundle_columns[step]
+            if not columns:
+                continue
+            pred = pd.Series(np.nan, index=work.index, dtype="float64")
+            total_n = 0
+            r2_values: list[float] = []
+            minute_corrs: list[float] = []
+            for _, block in work[columns + ["label"]].groupby(level="datetime", sort=False):
+                if len(block) < min_n:
+                    continue
+                ranked_x = block[columns].rank(method="average", pct=True)
+                ranked_x = ranked_x - ranked_x.mean(axis=0)
+                ranked_y = block["label"].rank(method="average", pct=True)
+                ranked_y = ranked_y - ranked_y.mean()
+                pred_arr, n, r2 = _ridge_fit_predict(ranked_x.to_numpy(dtype="float64"), ranked_y.to_numpy(dtype="float64"))
+                total_n += n
+                if np.isfinite(r2):
+                    r2_values.append(float(r2))
+                pred.loc[block.index] = pred_arr
+                corr, corr_n = _corr(pred_arr, ranked_y.to_numpy(dtype="float64"))
+                if corr_n >= min_n and np.isfinite(corr):
+                    minute_corrs.append(float(corr))
+            valid = pred.notna() & work["label"].notna()
+            pooled_corr, pooled_n = _corr(
+                pred.loc[valid].to_numpy(dtype="float64"),
+                work.loc[valid, "label"].groupby(level="datetime", sort=False).rank(method="average", pct=True).to_numpy(dtype="float64"),
+            )
+            delta_pred_corr = math.nan
+            if previous_pred is not None:
+                aligned = valid & previous_pred.notna()
+                if int(aligned.sum()) >= min_n:
+                    delta = pred.loc[aligned] - previous_pred.loc[aligned]
+                    target = work.loc[aligned, "label"].groupby(level="datetime", sort=False).rank(method="average", pct=True)
+                    delta_pred_corr, _ = _corr(delta.to_numpy(dtype="float64"), target.to_numpy(dtype="float64"))
+            rows.append(
+                {
+                    "trade_date": trade_date,
+                    "universe": universe,
+                    "label_family": family,
+                    "horizon_bars": horizon,
+                    "step": step,
+                    "previous_step": previous_step,
+                    "feature_count": len(columns),
+                    "sampled_minutes": int(len(minute_corrs)),
+                    "sample_count": int(total_n),
+                    "mean_minute_pred_rank_ic": float(np.mean(minute_corrs)) if minute_corrs else math.nan,
+                    "pooled_pred_rank_ic": float(pooled_corr) if np.isfinite(pooled_corr) else math.nan,
+                    "mean_minute_r2": float(np.mean(r2_values)) if r2_values else math.nan,
+                    "delta_pred_rank_ic_vs_previous": delta_pred_corr,
+                    "contract": "same-day 15m sampled cross-sectional ridge rank-model screen; descriptive incremental validation, not OOS backtest",
+                }
+            )
+            previous_pred = pred
+            previous_step = step
+    return pd.DataFrame(rows)
+
+
+def _portfolio_weights(block: pd.DataFrame, signal_column: str, quantile: float = 0.10) -> pd.Series:
+    ranked = block[signal_column].rank(method="first")
+    try:
+        bucket = pd.qcut(ranked, int(round(1.0 / quantile)), labels=False) + 1
     except ValueError:
         return pd.Series(dtype="float64")
-    long_index = block.index[bucket == 10]
+    top_bucket = int(np.nanmax(bucket))
+    long_index = block.index[bucket == top_bucket]
     short_index = block.index[bucket == 1]
     if len(long_index) == 0 or len(short_index) == 0:
         return pd.Series(dtype="float64")
@@ -1250,58 +1390,90 @@ def staggered_portfolio_proxy(
     portfolio_features = [column for column in CORE_DECILE_FEATURES if column in features.columns and column in analysis_features(features)]
     if not portfolio_features:
         return pd.DataFrame()
-    for label_column in [c for c in labels.columns if c.startswith("return_open_to_open__h")]:
+    variants = [
+        {"name": "long_high_q10_15m", "direction": 1.0, "quantile": 0.10, "rebalance_minutes": 15, "hawkes_gate": False},
+        {"name": "contrarian_q10_15m", "direction": -1.0, "quantile": 0.10, "rebalance_minutes": 15, "hawkes_gate": False},
+        {"name": "contrarian_q05_30m", "direction": -1.0, "quantile": 0.05, "rebalance_minutes": 30, "hawkes_gate": False},
+        {"name": "contrarian_q05_60m", "direction": -1.0, "quantile": 0.05, "rebalance_minutes": 60, "hawkes_gate": False},
+        {"name": "contrarian_q05_30m_hawkes_liquidity_gate", "direction": -1.0, "quantile": 0.05, "rebalance_minutes": 30, "hawkes_gate": True},
+    ]
+    label_candidates = [
+        c
+        for c in labels.columns
+        if c.startswith("return_open_to_open__h") or c.startswith("return_vwap_to_vwap__h")
+    ]
+    hawkes_gate_column = "hawkes_lite__hawkes_total_intensity"
+    for label_column in label_candidates:
         family, horizon_text = label_column.rsplit("__h", 1)
         horizon = int(horizon_text)
-        sleeve_count = max(1, int(math.ceil(horizon / rebalance_minutes)))
         base_mask = (universe_mask & labels[label_column].notna() & label_masks[label_column].fillna(False)).fillna(False)
         if int(base_mask.sum()) < min_n:
             continue
-        work = pd.concat([features.loc[base_mask, portfolio_features], labels.loc[base_mask, label_column].rename("label")], axis=1)
-        for feature in portfolio_features:
-            prev_by_sleeve: dict[int, pd.Series] = {}
-            rebalance_ordinal = 0
-            for dt, block in work[[feature, "label"]].dropna().groupby(level="datetime", sort=True):
-                if not _is_rebalance_minute(dt, rebalance_minutes) or len(block) < min_n:
-                    continue
-                sleeve_id = rebalance_ordinal % sleeve_count
-                rebalance_ordinal += 1
-                weights = _portfolio_weights(block, feature)
-                if weights.empty:
-                    continue
-                long_mask = weights > 0
-                short_mask = weights < 0
-                gross_return = float((weights * block.loc[weights.index, "label"]).sum())
-                prev_weights = prev_by_sleeve.get(sleeve_id)
-                if prev_weights is None:
-                    turnover = float(weights.abs().sum())
-                else:
-                    combined = weights.reindex(weights.index.union(prev_weights.index), fill_value=0.0)
-                    previous = prev_weights.reindex(combined.index, fill_value=0.0)
-                    turnover = float((combined - previous).abs().sum())
-                cost = turnover * cost_bps_per_turnover / 10000.0
-                rows.append(
-                    {
-                        "trade_date": trade_date,
-                        "datetime": dt,
-                        "universe": universe,
-                        "feature": feature,
-                        "bundle": infer_bundle(feature),
-                        "label_family": family,
-                        "horizon_bars": horizon,
-                        "rebalance_minutes": rebalance_minutes,
-                        "sleeve_count": sleeve_count,
-                        "sleeve_id": sleeve_id,
-                        "portfolio_accounting": "same_sleeve_turnover",
-                        "long_count": int(long_mask.sum()),
-                        "short_count": int(short_mask.sum()),
-                        "gross_return": gross_return,
-                        "turnover": turnover,
-                        "cost_bps_per_turnover": cost_bps_per_turnover,
-                        "net_return": gross_return - cost,
-                    }
-                )
-                prev_by_sleeve[sleeve_id] = weights
+        extra_columns = [hawkes_gate_column] if hawkes_gate_column in features.columns else []
+        work = pd.concat(
+            [features.loc[base_mask, portfolio_features + extra_columns], labels.loc[base_mask, label_column].rename("label")],
+            axis=1,
+        )
+        for variant in variants:
+            variant_rebalance = int(variant["rebalance_minutes"])
+            sleeve_count = max(1, int(math.ceil(horizon / variant_rebalance)))
+            for feature in portfolio_features:
+                prev_by_sleeve: dict[int, pd.Series] = {}
+                rebalance_ordinal = 0
+                columns = [feature, "label"]
+                if variant["hawkes_gate"] and hawkes_gate_column in work.columns:
+                    columns.append(hawkes_gate_column)
+                for dt, block in work[columns].dropna(subset=[feature, "label"]).groupby(level="datetime", sort=True):
+                    if not _is_rebalance_minute(dt, variant_rebalance) or len(block) < min_n:
+                        continue
+                    if variant["hawkes_gate"] and hawkes_gate_column in block.columns:
+                        gate_rank = block[hawkes_gate_column].rank(method="average", pct=True)
+                        block = block.loc[gate_rank <= 0.80]
+                        if len(block) < min_n:
+                            continue
+                    sleeve_id = rebalance_ordinal % sleeve_count
+                    rebalance_ordinal += 1
+                    block = block.assign(__signal=block[feature].astype(float) * float(variant["direction"]))
+                    weights = _portfolio_weights(block, "__signal", quantile=float(variant["quantile"]))
+                    if weights.empty:
+                        continue
+                    long_mask = weights > 0
+                    short_mask = weights < 0
+                    gross_return = float((weights * block.loc[weights.index, "label"]).sum())
+                    prev_weights = prev_by_sleeve.get(sleeve_id)
+                    if prev_weights is None:
+                        turnover = float(weights.abs().sum())
+                    else:
+                        combined = weights.reindex(weights.index.union(prev_weights.index), fill_value=0.0)
+                        previous = prev_weights.reindex(combined.index, fill_value=0.0)
+                        turnover = float((combined - previous).abs().sum())
+                    cost = turnover * cost_bps_per_turnover / 10000.0
+                    rows.append(
+                        {
+                            "trade_date": trade_date,
+                            "datetime": dt,
+                            "universe": universe,
+                            "feature": feature,
+                            "bundle": infer_bundle(feature),
+                            "label_family": family,
+                            "horizon_bars": horizon,
+                            "portfolio_variant": variant["name"],
+                            "signal_direction": "long_high" if variant["direction"] > 0 else "contrarian",
+                            "quantile": float(variant["quantile"]),
+                            "hawkes_liquidity_gate": bool(variant["hawkes_gate"]),
+                            "rebalance_minutes": variant_rebalance,
+                            "sleeve_count": sleeve_count,
+                            "sleeve_id": sleeve_id,
+                            "portfolio_accounting": "same_sleeve_turnover",
+                            "long_count": int(long_mask.sum()),
+                            "short_count": int(short_mask.sum()),
+                            "gross_return": gross_return,
+                            "turnover": turnover,
+                            "cost_bps_per_turnover": cost_bps_per_turnover,
+                            "net_return": gross_return - cost,
+                        }
+                    )
+                    prev_by_sleeve[sleeve_id] = weights
     return pd.DataFrame(rows)
 
 
@@ -1362,6 +1534,7 @@ def run_date(
     deciles = decile_curves(features, labels, label_masks, controls, residual_cache, trade_date, min_n)
     del residual_cache
     gc.collect()
+    incremental_models = bundle_incremental_model_screen(features, labels, label_masks, controls, trade_date, min_n)
     portfolio = staggered_portfolio_proxy(
         features,
         labels,
@@ -1383,6 +1556,9 @@ def run_date(
     if not portfolio.empty:
         portfolio.to_parquet(out_dir / "staggered_portfolio_proxy.parquet", index=False)
         portfolio.to_csv(out_dir / "staggered_portfolio_proxy.csv", index=False)
+    if not incremental_models.empty:
+        incremental_models.to_parquet(out_dir / "bundle_incremental_model_screen.parquet", index=False)
+        incremental_models.to_csv(out_dir / "bundle_incremental_model_screen.csv", index=False)
 
     masks = universe_masks(features, controls)
     meta = {
@@ -1404,6 +1580,7 @@ def run_date(
         "summary_rows": int(len(summary)),
         "decile_rows": int(len(deciles)),
         "portfolio_rows": int(len(portfolio)),
+        "incremental_model_rows": int(len(incremental_models)),
         "portfolio_accounting": "same_sleeve_turnover",
         "label_non_null": {column: int(labels[column].notna().sum()) for column in labels.columns},
         "label_real_volume_valid": {column: int(label_masks[column].fillna(False).sum()) for column in labels.columns},
@@ -1517,9 +1694,9 @@ def write_research_contract(out_root: Path) -> None:
         "name": "NFF v2.1 neutralized representative validity and same-sleeve portfolio proxy",
         "rank_ic_methods": [
             "minute_mean_cs_rank_ic",
-            "pooled_cs_rank_ic",
+            "pooled_cs_demeaned_pct_rank_ic",
             "minute_mean_cs_rank_ic_residualized",
-            "pooled_cs_rank_ic_residualized",
+            "pooled_cs_demeaned_pct_rank_ic_residualized",
         ],
         "alpha_feature_policy": {
             "included": REPRESENTATIVE_ALPHA_FEATURES,
@@ -1543,9 +1720,16 @@ def write_research_contract(out_root: Path) -> None:
         },
         "portfolio_proxy_contract": {
             "rebalance": "Every 15 NY regular-session minutes.",
-            "portfolio": "Equal-weight long top decile and short bottom decile in liquid_common_adv20_top1000.",
-            "capital": "Same-sleeve accounting; for horizon H and 15m rebalance, ceil(H/15) sleeves are tracked and turnover compares a sleeve only with its own prior weights.",
+            "portfolio": "Equal-weight long-short variants in liquid_common_adv20_top1000, including contrarian tails and Hawkes liquidity gate.",
+            "execution_labels": ["return_open_to_open", "return_vwap_to_vwap"],
+            "capital": "Same-sleeve accounting; for horizon H and rebalance R, ceil(H/R) sleeves are tracked and turnover compares a sleeve only with its own prior weights.",
             "cost": "net_return = gross_return - turnover * cost_bps_per_turnover / 10000.",
+        },
+        "incremental_model_contract": {
+            "name": "bundle_incremental_model_screen",
+            "steps": [step for step, _ in BUNDLE_MODEL_STEPS],
+            "labels": sorted(BUNDLE_MODEL_LABELS),
+            "method": "same-day 15m sampled cross-sectional ridge rank-model; descriptive incremental validation, not OOS backtest",
         },
         "session_contract": {
             "timezone": str(SESSION_TZ),
@@ -1762,12 +1946,53 @@ def aggregate(out_root: Path) -> None:
         overall_deciles.to_parquet(agg / "decile_curves_overall.parquet", index=False)
         overall_deciles.to_csv(agg / "decile_curves_overall.csv", index=False)
 
+    model_frames = [pd.read_parquet(path) for path in sorted(base.glob("date=*/bundle_incremental_model_screen.parquet"))]
+    if model_frames:
+        models = pd.concat(model_frames, ignore_index=True)
+        models.to_parquet(agg / "bundle_incremental_model_screen_by_date.parquet", index=False)
+        models.to_csv(agg / "bundle_incremental_model_screen_by_date.csv", index=False)
+        model_group_cols = ["universe", "label_family", "horizon_bars", "step", "previous_step"]
+        model_overall = (
+            models.groupby(model_group_cols, dropna=False)
+            .agg(
+                dates=("trade_date", "nunique"),
+                mean_sampled_minutes=("sampled_minutes", "mean"),
+                mean_sample_count=("sample_count", "mean"),
+                mean_minute_pred_rank_ic=("mean_minute_pred_rank_ic", "mean"),
+                median_minute_pred_rank_ic=("mean_minute_pred_rank_ic", "median"),
+                mean_pooled_pred_rank_ic=("pooled_pred_rank_ic", "mean"),
+                mean_minute_r2=("mean_minute_r2", "mean"),
+                mean_delta_pred_rank_ic_vs_previous=("delta_pred_rank_ic_vs_previous", "mean"),
+            )
+            .reset_index()
+        )
+        hac_model_rows = []
+        for keys, group in models.groupby(model_group_cols, dropna=False, sort=False):
+            t_value, p_value, n = _hac_tstat(group.sort_values("trade_date")["mean_minute_pred_rank_ic"])
+            hac_model_rows.append((*keys, t_value, p_value, n))
+        hac_models = pd.DataFrame(hac_model_rows, columns=model_group_cols + ["hac_tstat_lag5", "hac_pvalue", "hac_n"])
+        model_overall = model_overall.merge(hac_models, on=model_group_cols, how="left")
+        model_overall.to_parquet(agg / "bundle_incremental_model_screen_overall.parquet", index=False)
+        model_overall.to_csv(agg / "bundle_incremental_model_screen_overall.csv", index=False)
+
     portfolio_frames = [pd.read_parquet(path) for path in sorted(base.glob("date=*/staggered_portfolio_proxy.parquet"))]
     if portfolio_frames:
         portfolio = pd.concat(portfolio_frames, ignore_index=True)
         portfolio.to_parquet(agg / "staggered_portfolio_proxy_by_cohort.parquet", index=False)
+        portfolio_keys = [
+            "universe",
+            "feature",
+            "bundle",
+            "label_family",
+            "horizon_bars",
+            "portfolio_variant",
+            "signal_direction",
+            "quantile",
+            "hawkes_liquidity_gate",
+            "rebalance_minutes",
+        ]
         portfolio_daily = (
-            portfolio.groupby(["trade_date", "universe", "feature", "bundle", "label_family", "horizon_bars"], dropna=False)
+            portfolio.groupby(["trade_date", *portfolio_keys], dropna=False)
             .agg(
                 cohorts=("net_return", "count"),
                 gross_return_mean=("gross_return", "mean"),
@@ -1780,7 +2005,7 @@ def aggregate(out_root: Path) -> None:
         )
         portfolio_daily.to_csv(agg / "staggered_portfolio_proxy_by_date.csv", index=False)
         portfolio_overall = (
-            portfolio_daily.groupby(["universe", "feature", "bundle", "label_family", "horizon_bars"], dropna=False)
+            portfolio_daily.groupby(portfolio_keys, dropna=False)
             .agg(
                 dates=("trade_date", "nunique"),
                 cohorts=("cohorts", "sum"),
@@ -1800,12 +2025,13 @@ def aggregate(out_root: Path) -> None:
         "",
         f"- Finished UTC: {utc_now()}",
         "- RankIC method: v1-compatible minute-level cross-sectional Spearman IC, then daily mean over minutes.",
-        "- Also emitted pooled cross-sectional RankIC in the same run for v2 comparability.",
+        "- Corrected pooled RankIC: each minute is percentile-ranked and demeaned before pooling to avoid cross-section-size mechanical correlation.",
         "- Neutralization: per-minute OLS residualization against log price, previous 20d ADV, same-minute dollar volume, active-second ratio, trade count, realized vol, and an intraday beta proxy.",
+        "- Incremental validation: same-day 15m sampled cross-sectional ridge rank-model screen comparing Traditional baseline to +Minute-NVG/+Trade-NVG/+Hawkes bundles.",
         "- Alpha feature policy: representative semantic features only; readiness/warmup/coverage/activity/stale/trade-count axes are masks or controls, not alpha columns.",
         "- Tradability: liquid-common universe requires price >= 5, previous 20d ADV top 1000, 20 lookback days, real entry/exit volume, trade_count >= 1, and active-second/stale filters when available.",
         "- Labels: next-minute open/vwap/close entry-to-future-exit return labels plus liquidity deterioration, realized volatility, jump-tail event, and execution-cost proxy.",
-        "- Portfolio proxy: 15-minute NY-session same-sleeve top/bottom decile long-short cohorts with turnover and simple cost columns.",
+        "- Portfolio proxy: same-sleeve long-short variants covering long-high, contrarian, 5% tails, 30/60m rebalance, VWAP execution labels, and Hawkes liquidity gate.",
         "- Sector neutralization: not applied because no local sector reference file was found in the warehouse scan; this is recorded in each date meta.",
         "- July should be read as a stress slice, not true OOS.",
     ]
