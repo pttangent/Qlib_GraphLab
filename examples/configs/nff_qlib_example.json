@@ -1,0 +1,96 @@
+{
+  "experiment_name": "nff_three_month_screening",
+  "handler": {
+    "warehouse_root": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_warehouse",
+    "canonical_sets": {
+      "bars_1m": [
+        "close",
+        "volume",
+        "dollar_volume"
+      ]
+    },
+    "feature_sets": {
+      "minute_nvg": {
+        "schema_version": "v3",
+        "columns": [
+          "price_nvg_30m_top_bottom_asymmetry",
+          "price_path_30m_efficiency",
+          "price_volume_terminal_overlap_30m"
+        ]
+      },
+      "trade_nvg": {
+        "schema_version": "v3",
+        "columns": [
+          "trade_flow_nvg_300s_top_bottom_asymmetry",
+          "trade_flow_path_300s_efficiency",
+          "trade_price_flow_terminal_overlap_300s"
+        ]
+      }
+    },
+    "execution": {
+      "frequency": "1min",
+      "delay_bars": 1,
+      "collision_policy": "latest"
+    },
+    "label": {
+      "name": "LABEL0",
+      "dataset": "bars_1m",
+      "entry_column": "open",
+      "exit_column": "open",
+      "horizon_bars": 30,
+      "future_sessions": 5,
+      "same_session": true
+    },
+    "instruments": "all",
+    "start_time": "2026-05-01T13:30:00Z",
+    "end_time": "2026-07-31T20:00:00Z",
+    "infer_processors": [
+      {
+        "class": "ProcessInf"
+      },
+      {
+        "class": "CSZScoreNorm",
+        "kwargs": {
+          "fields_group": "feature",
+          "method": "robust"
+        }
+      }
+    ],
+    "learn_processors": [
+      {
+        "class": "DropnaLabel"
+      }
+    ],
+    "drop_raw": true,
+    "loader_kwargs": {
+      "strict_manifests": true,
+      "allow_mixed_contracts": false,
+      "output_float32": true,
+      "arrow_use_threads": true
+    }
+  },
+  "segments": {
+    "train": [
+      "2026-05-01",
+      "2026-06-15"
+    ],
+    "valid": [
+      "2026-06-16",
+      "2026-07-10"
+    ],
+    "test": [
+      "2026-07-11",
+      "2026-07-31"
+    ]
+  },
+  "model": {
+    "loss": "mse",
+    "num_leaves": 31,
+    "learning_rate": 0.05,
+    "num_boost_round": 300,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "num_threads": 8
+  },
+  "output_dir": "nff_qlib_output"
+}
