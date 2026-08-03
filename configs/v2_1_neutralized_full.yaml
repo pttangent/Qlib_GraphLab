@@ -1,11 +1,11 @@
 run:
-  name: v2_1_neutralized_full_20260803_dst_contract_sleeves_r2
+  name: v2_1_neutralized_full_20260803_dst_contract_sleeves_r3
   script: nff_research/v2_1_neutralized_runner.py
   start_date: "2026-01-02"
   end_date: "2026-07-22"
   horizons: [15, 30, 60, 120]
-  initial_parallel: 16
-  max_parallel: 24
+  initial_parallel: 8
+  max_parallel: 12
   min_parallel: 4
   target_cpu_percent: 90
   memory_high_water_percent: 88
