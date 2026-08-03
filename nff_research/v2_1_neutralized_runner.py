@@ -962,18 +962,27 @@ def _residualize_matrix(values: pd.DataFrame, controls: pd.DataFrame, min_n: int
         if int(control_valid.sum()) < min_n:
             continue
         v_clean = v.replace([np.inf, -np.inf], np.nan)
+        grouped_columns: dict[bytes, list[str]] = {}
+        grouped_masks: dict[bytes, np.ndarray] = {}
+        control_valid_arr = control_valid.to_numpy(dtype=bool)
         for column in values.columns:
-            base = control_valid & v_clean[column].notna()
-            if int(base.sum()) < min_n:
+            base_arr = control_valid_arr & v_clean[column].notna().to_numpy(dtype=bool)
+            if int(base_arr.sum()) < min_n:
                 continue
-            x = c_clean.loc[base].to_numpy(dtype="float64")
+            key = np.packbits(base_arr).tobytes()
+            grouped_columns.setdefault(key, []).append(column)
+            grouped_masks[key] = base_arr
+        for key, columns in grouped_columns.items():
+            base_arr = grouped_masks[key]
+            row_index = v_clean.index[base_arr]
+            x = c_clean.loc[row_index].to_numpy(dtype="float64")
             x = np.column_stack([np.ones(x.shape[0]), x])
-            y = v_clean.loc[base, column].to_numpy(dtype="float64")
+            y = v_clean.loc[row_index, columns].to_numpy(dtype="float64")
             try:
                 coef, *_ = np.linalg.lstsq(x, y, rcond=None)
             except np.linalg.LinAlgError:
                 continue
-            result.loc[v_clean.loc[base].index, column] = (y - x @ coef).astype("float32")
+            result.loc[row_index, columns] = (y - x @ coef).astype("float32")
     return result
 
 
