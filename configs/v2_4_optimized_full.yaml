@@ -3,7 +3,7 @@ base_runner_version: "2.3"
 
 run:
   name: v2_4_cached_fastpath_full_20260803
-  script: nff_research/v2_4_optimized_runner.py
+  script: nff_research/v2_4_optimized_entry.py
   start_date: "2026-01-02"
   end_date: "2026-07-22"
   horizons: [15, 30, 60, 120]
@@ -30,6 +30,7 @@ optimization:
   contract: v2_4_cpu_fastpath_v1
   reference_runner: nff_research/v2_1_neutralized_runner.py
   exact_column_projection: true
+  exact_canonical_projection: true
   prefer_materialized_hawkes_derived: true
   derive_hawkes_only_as_fallback: true
   rank_once_for_minute_and_pooled_ic: true
