@@ -456,6 +456,15 @@ def test_vwap_portfolio_is_primary_and_emits_gate_capacity_fields():
     }.issubset(result.columns)
 
 
+def test_portfolio_deduplicates_feature_that_is_also_hawkes_gate():
+    features, labels, masks, controls = _bundle_screen_inputs(n_symbols=100, minutes=2)
+    features["hawkes_derived__hawkes_exogenous_shock_300s"] = np.linspace(0.1, 1.0, len(features))
+
+    result = runner.staggered_portfolio_proxy(features, labels, masks, controls, "2026-07-06", min_n=30)
+
+    assert not result.empty
+
+
 def test_portfolio_variant_catalog_is_configurable(monkeypatch: pytest.MonkeyPatch):
     features, labels, masks, controls = _bundle_screen_inputs(n_symbols=100, minutes=2)
     monkeypatch.setattr(runner, "ENABLED_PORTFOLIO_VARIANTS", ["contrarian_q05_30m_turnover_controlled"])

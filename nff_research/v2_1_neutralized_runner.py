@@ -1963,6 +1963,7 @@ def staggered_portfolio_proxy(
         if c.startswith("return_open_to_open__h") or c.startswith("return_vwap_to_vwap__h")
     ]
     hawkes_gate_columns = [spec["column"] for spec in HAWKES_GATE_SPECS if spec["column"] in features.columns]
+    work_feature_columns = list(dict.fromkeys(portfolio_features + hawkes_gate_columns))
     for label_column in label_candidates:
         family, horizon_text = label_column.rsplit("__h", 1)
         horizon = int(horizon_text)
@@ -1972,7 +1973,7 @@ def staggered_portfolio_proxy(
         adv20 = np.expm1(pd.to_numeric(controls.loc[base_mask, "control__log_adv20"], errors="coerce")).rename("__adv20")
         work = pd.concat(
             [
-                features.loc[base_mask, portfolio_features + hawkes_gate_columns],
+                features.loc[base_mask, work_feature_columns],
                 labels.loc[base_mask, label_column].rename("label"),
                 adv20,
             ],
@@ -1985,10 +1986,10 @@ def staggered_portfolio_proxy(
                 prev_by_sleeve: dict[int, pd.Series] = {}
                 previous_signal_by_sleeve: dict[int, pd.Series] = {}
                 previous_hold_periods_by_sleeve: dict[int, dict[str, int]] = {}
-                columns = [feature, "label", "__adv20"]
+                columns = list(dict.fromkeys([feature, "label", "__adv20"]))
                 gate_column = variant.get("gate_column")
                 if variant["gate_pair_id"] is not None and gate_column in work.columns:
-                    columns.append(str(gate_column))
+                    columns = list(dict.fromkeys([*columns, str(gate_column)]))
                 for dt, block in work[columns].dropna(subset=[feature, "label", "__adv20"]).groupby(level="datetime", sort=True):
                     rebalance_ordinal = _rebalance_ordinal(dt, variant_rebalance)
                     if rebalance_ordinal is None or len(block) < min_n:
