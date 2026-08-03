@@ -731,6 +731,18 @@ def _future_roll(series: pd.Series, window: int, op: str) -> pd.Series:
     return V2._future_roll(series, window, op)
 
 
+def _future_bipower_variation(returns: pd.Series, horizon: int) -> pd.Series:
+    """Future-window BPV using only adjacent returns inside t+1...t+h."""
+    if horizon <= 1:
+        return pd.Series(0.0, index=returns.index, dtype="float64")
+    absolute = returns.astype(float).abs()
+    next_absolute = absolute.groupby(level="instrument", sort=False, group_keys=False).shift(-1)
+    adjacent_term = absolute * next_absolute
+    return adjacent_term.groupby(level="instrument", sort=False, group_keys=False).transform(
+        lambda s, w=horizon - 1: s.astype(float).shift(-1).iloc[::-1].rolling(w, min_periods=w).sum().iloc[::-1]
+    )
+
+
 def add_all_features(frame: pd.DataFrame) -> pd.DataFrame:
     features = V2.add_hawkes_derived(frame)
     features = V2.add_traditional_factors(features)
@@ -752,9 +764,6 @@ def build_labels_and_masks(frame: pd.DataFrame, horizons: list[int]) -> tuple[pd
     liquidity_log = np.log1p(dollar_volume) + 0.25 * np.log1p(trade_count)
     ret1 = group["bars_1m__close"].pct_change(fill_method=None).astype(float)
     amihud = ret1.abs() / (dollar_volume + 1.0) * 1e8
-    abs_ret1 = ret1.abs()
-    lag_abs_ret1 = abs_ret1.groupby(level="instrument", sort=False, group_keys=False).shift(1)
-    bipower_term = abs_ret1 * lag_abs_ret1
 
     for horizon in horizons:
         entry_volume = volume.groupby(level="instrument", sort=False, group_keys=False).shift(-1)
@@ -786,9 +795,7 @@ def build_labels_and_masks(frame: pd.DataFrame, horizons: list[int]) -> tuple[pd
         labels[name] = np.sqrt(future_var)
         masks[name] = real_volume_mask
 
-        future_bipower = bipower_term.groupby(level="instrument", sort=False, group_keys=False).transform(
-            lambda s, w=horizon: _future_roll(s.astype(float), w, "sum")
-        )
+        future_bipower = _future_bipower_variation(ret1, horizon)
         jump_variation = (future_var - (math.pi / 2.0) * future_bipower).clip(lower=0)
         threshold = jump_variation.groupby(level="datetime", sort=False).transform(lambda s: s.quantile(0.99))
         name = f"jump_tail_event__h{horizon}"
@@ -816,9 +823,19 @@ def label_dependency_diagnostics(labels: pd.DataFrame, trade_date: str) -> pd.Da
             if realized not in labels.columns or label_column not in labels.columns:
                 continue
             pair = labels[[realized, label_column]].replace([np.inf, -np.inf], np.nan).dropna()
-            correlation, count = _corr(
-                pair[realized].rank(method="average").to_numpy(dtype="float64"),
-                pair[label_column].rank(method="average").to_numpy(dtype="float64"),
+            minute_correlations: list[float] = []
+            for _, minute in pair.groupby(level="datetime", sort=False):
+                if len(minute) < 2:
+                    continue
+                minute_corr, _ = _corr(
+                    minute[realized].rank(method="average").to_numpy(dtype="float64"),
+                    minute[label_column].rank(method="average").to_numpy(dtype="float64"),
+                    min_n=2,
+                )
+                if np.isfinite(minute_corr):
+                    minute_correlations.append(float(minute_corr))
+            pooled_corr, pooled_count = _pooled_demeaned_pct_rank_corr(
+                pair[realized], pair[label_column], min_n=2
             )
             rows.append(
                 {
@@ -827,8 +844,11 @@ def label_dependency_diagnostics(labels: pd.DataFrame, trade_date: str) -> pd.Da
                     "diagnostic": diagnostic,
                     "label_a": realized,
                     "label_b": label_column,
-                    "rank_correlation": correlation,
-                    "sample_count": count,
+                    "rank_correlation": float(np.mean(minute_correlations)) if minute_correlations else math.nan,
+                    "minute_mean_rank_correlation": float(np.mean(minute_correlations)) if minute_correlations else math.nan,
+                    "pooled_demeaned_pct_rank_correlation": pooled_corr,
+                    "positive_ratio": float(np.mean(np.asarray(minute_correlations) > 0)) if minute_correlations else math.nan,
+                    "sample_count": pooled_count,
                     "interpretation": "high correlation indicates the diagnostic label is not an independent research axis",
                 }
             )
@@ -948,10 +968,10 @@ def universe_masks(features: pd.DataFrame, controls: pd.DataFrame) -> dict[str, 
     }
 
 
-def _corr(x: np.ndarray, y: np.ndarray) -> tuple[float, int]:
+def _corr(x: np.ndarray, y: np.ndarray, min_n: int = 30) -> tuple[float, int]:
     valid = np.isfinite(x) & np.isfinite(y)
     n = int(valid.sum())
-    if n < 30:
+    if n < min_n:
         return math.nan, n
     xv = x[valid].astype("float64")
     yv = y[valid].astype("float64")
@@ -1749,6 +1769,8 @@ def _turnover_controlled_weights(
         target_symbols = list(target_side.index.astype(str))
         protected: list[str] = []
         for symbol in previous_symbols:
+            if symbol not in current_ranks.index:
+                continue
             rank = current_ranks.get(symbol, math.nan)
             age = int(hold_periods.get(symbol, 1))
             in_buffer = rank >= 1.0 - buffer_quantile if side > 0 else rank <= buffer_quantile
@@ -2200,6 +2222,10 @@ def run_date(
         "portfolio_rows": int(len(portfolio)),
         "incremental_model_rows": int(len(incremental_models)),
         "label_dependency_diagnostic_rows": int(len(label_diagnostics)),
+        "label_dependency_diagnostic_contract": {
+            "method": "per-minute cross-sectional rank correlation, daily minute mean, corrected pooled percentile-rank correlation, positive-minute ratio",
+            "interpretation": "diagnostic only; high correlation means the label is not an independent research axis",
+        },
         "incremental_validation": {
             "method": "fixed_symbol_fold_cross_sectional_oof_ridge",
             "folds": oof_folds,
@@ -2365,6 +2391,11 @@ def write_research_contract(out_root: Path) -> None:
             "min_train_n": int(incremental.get("min_train_n", OOF_MIN_TRAIN_N)),
             "sample_policy": incremental.get("sample_policy", OOF_SAMPLE_POLICY),
             "pooled_metric": "per-minute prediction and target percentile rank with demeaning before pooling",
+        },
+        "label_dependency_contract": {
+            "method": "per-minute cross-sectional rank correlation, then daily minute mean; corrected pooled percentile-rank correlation is also emitted",
+            "positive_ratio": "fraction of valid decision minutes with positive cross-sectional rank correlation",
+            "interpretation": "high jump-versus-realized-volatility correlation indicates that jump is not an independent risk axis; cost-versus-volatility remains a mechanical proxy diagnostic",
         },
         "session_contract": {
             "timezone": str(SESSION_TZ),
@@ -2548,6 +2579,9 @@ def aggregate(out_root: Path) -> None:
                 dates=("trade_date", "nunique"),
                 mean_rank_correlation=("rank_correlation", "mean"),
                 median_rank_correlation=("rank_correlation", "median"),
+                mean_minute_mean_rank_correlation=("minute_mean_rank_correlation", "mean"),
+                mean_pooled_demeaned_pct_rank_correlation=("pooled_demeaned_pct_rank_correlation", "mean"),
+                mean_positive_ratio=("positive_ratio", "mean"),
                 mean_sample_count=("sample_count", "mean"),
             )
             .reset_index()
@@ -2785,6 +2819,7 @@ def aggregate(out_root: Path) -> None:
         "- Alpha feature policy: representative semantic features only; readiness/warmup/coverage/activity/stale/trade-count axes are masks or controls, not alpha columns.",
         "- Tradability: liquid-common universe requires price >= 5, previous 20d ADV top 1000, 20 lookback days, real entry/exit volume, trade_count >= 1, and active-second/stale filters when available.",
         "- Labels: next-minute open/vwap/close entry-to-future-exit return labels plus liquidity deterioration, realized volatility, jump-tail event, and execution-cost proxy.",
+        "- Label dependency diagnostics use per-minute cross-sectional ranks, daily minute means, corrected pooled ranks, and positive-minute ratios; they do not mix the intraday clock into a global row correlation.",
         "- Primary execution result: VWAP-to-VWAP. Open-to-open is diagnostic. Hawkes gate comparisons use a shared pre-gate sample.",
         "- Sector neutralization: not applied because no local sector reference file was found in the warehouse scan; this is recorded in each date meta.",
         "- July should be read as a stress slice, not true OOS.",

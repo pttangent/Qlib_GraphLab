@@ -359,6 +359,67 @@ def test_turnover_controlled_weights_keep_minimum_hold_and_cap_replacements():
     assert state["minimum_hold_retained_count"] == 2
 
 
+def test_turnover_control_forces_exit_when_previous_symbol_is_not_currently_eligible():
+    symbols = _symbols(20)
+    index = pd.MultiIndex.from_arrays(
+        [[pd.Timestamp("2026-07-06T13:30:00Z")] * len(symbols), symbols],
+        names=["datetime", "instrument"],
+    )
+    block = pd.DataFrame({"signal": np.arange(len(symbols), dtype=float)}, index=index)
+    previous_index = pd.MultiIndex.from_tuples(
+        [(pd.Timestamp("2026-07-06T13:00:00Z"), "MISSING")], names=["datetime", "instrument"]
+    )
+    previous = pd.Series([0.5], index=previous_index)
+    previous_signal = pd.Series({"MISSING": 0.9})
+
+    weights, _ = runner._turnover_controlled_weights(
+        block, "signal", previous, previous_signal, {"MISSING": 1},
+        quantile=0.05, buffer_quantile=0.10, min_hold_periods=2,
+        signal_change_threshold=0.10, max_replacement_fraction=0.50,
+    )
+
+    assert "MISSING" not in set(weights.index.get_level_values("instrument"))
+
+
+def test_future_bipower_uses_only_adjacent_returns_inside_future_window():
+    index = pd.MultiIndex.from_arrays(
+        [[pd.Timestamp("2026-07-06T13:30:00Z")] * 6, ["A"] * 6],
+        names=["datetime", "instrument"],
+    )
+    returns = pd.Series([1.0, 2.0, 3.0, 5.0, 7.0, 11.0], index=index)
+
+    bpv = runner._future_bipower_variation(returns, horizon=3)
+
+    # At t=0 the future returns are 2,3,5; BPV is 2*3 + 3*5, never 1*2.
+    assert bpv.iloc[0] == pytest.approx(21.0)
+
+
+def test_label_dependency_diagnostic_is_minute_mean_and_corrected_pooled():
+    index = pd.MultiIndex.from_arrays(
+        [
+            [pd.Timestamp("2026-07-06T13:30:00Z")] * 4
+            + [pd.Timestamp("2026-07-06T13:31:00Z")] * 4,
+            ["A", "B", "C", "D"] * 2,
+        ],
+        names=["datetime", "instrument"],
+    )
+    labels = pd.DataFrame(
+        {
+            "realized_volatility__h15": [1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0],
+            "jump_tail_event__h15": [1.0, 2.0, 3.0, 4.0, 40.0, 30.0, 20.0, 10.0],
+            "execution_cost_proxy__h15": [1.0, 2.0, 3.0, 4.0, 40.0, 30.0, 20.0, 10.0],
+        },
+        index=index,
+    )
+
+    result = runner.label_dependency_diagnostics(labels, "2026-07-06")
+
+    assert {"minute_mean_rank_correlation", "pooled_demeaned_pct_rank_correlation", "positive_ratio"}.issubset(result.columns)
+    jump = result[result["diagnostic"] == "jump_vs_realized_volatility"].iloc[0]
+    assert jump["minute_mean_rank_correlation"] == pytest.approx(0.0)
+    assert jump["pooled_demeaned_pct_rank_correlation"] == pytest.approx(0.0)
+
+
 def test_label_evidence_roles_keep_jump_and_cost_diagnostic_but_screen_them_oof():
     assert set(runner.BUNDLE_MODEL_LABEL_ROLES) == set(runner.LABEL_FAMILIES)
     assert runner.BUNDLE_MODEL_LABEL_ROLES["jump_tail_event"] == "diagnostic_jump_orthogonality"
