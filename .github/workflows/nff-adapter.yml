@@ -7,16 +7,21 @@ on:
       - "tests/test_nff_adapter.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
+      - "configs/v2_1_neutralized_full.yaml"
+      - "nff_research/**"
       - "docs/component/nff_adapter.md"
       - ".github/workflows/nff-adapter.yml"
   push:
     branches:
       - "agent/nff-direct-qlib-adapter"
+      - "codex/**"
     paths:
       - "qlib/contrib/data/nff.py"
       - "tests/test_nff_adapter.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
+      - "configs/v2_1_neutralized_full.yaml"
+      - "nff_research/**"
       - ".github/workflows/nff-adapter.yml"
 
 permissions:
@@ -40,5 +45,5 @@ jobs:
         run: python -m pip install -e ".[dev]"
       - name: Run NFF adapter tests
         run: python -m pytest -q tests/test_nff_adapter.py --tb=short
-      - name: Compile executable example
-        run: python -m py_compile qlib/contrib/data/nff.py examples/nff_qlib_pipeline.py tests/test_nff_adapter.py
+      - name: Compile executable research entrypoints
+        run: python -m py_compile qlib/contrib/data/nff.py examples/nff_qlib_pipeline.py tests/test_nff_adapter.py nff_research/v2_multilabel_runner.py nff_research/v2_1_neutralized_runner.py

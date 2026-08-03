@@ -441,8 +441,23 @@ class NFFDataLoader(DataLoader):
 
         frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
         frame["available_time"] = pd.to_datetime(frame["available_time"], utc=True, errors="coerce")
-        frame["symbol"] = frame["symbol"].astype(str).str.upper().str.strip()
-        frame = frame.dropna(subset=["symbol_id", "symbol", "timestamp", "available_time"])
+        raw_symbol = frame["symbol"]
+        normalized_symbol = raw_symbol.astype("string").str.upper().str.strip()
+        symbol_valid = (
+            raw_symbol.notna()
+            & normalized_symbol.notna()
+            & normalized_symbol.ne("")
+            & ~normalized_symbol.isin({"NAN", "NONE", "<NA>"})
+        )
+        frame["symbol"] = normalized_symbol.astype(object)
+        key_valid = (
+            frame["symbol_id"].notna()
+            & symbol_valid
+            & frame["timestamp"].notna()
+            & frame["available_time"].notna()
+        )
+        if not bool(key_valid.all()):
+            frame = frame.loc[key_valid].copy(deep=False)
         duplicate_count = int(frame.duplicated(["symbol_id", "timestamp"]).sum())
         if duplicate_count:
             raise ValueError(f"NFF source {spec.name} has {duplicate_count} duplicate symbol/timestamp rows")
@@ -694,9 +709,9 @@ class NFFDataHandlerLP(DataHandlerLP):
         instruments=None,
         start_time=None,
         end_time=None,
-        infer_processors: List[Any] = [],
-        learn_processors: List[Any] = [],
-        shared_processors: List[Any] = [],
+        infer_processors: Optional[List[Any]] = None,
+        learn_processors: Optional[List[Any]] = None,
+        shared_processors: Optional[List[Any]] = None,
         process_type=DataHandlerLP.PTYPE_A,
         drop_raw: bool = True,
         loader_kwargs: Optional[Mapping[str, Any]] = None,
@@ -716,9 +731,9 @@ class NFFDataHandlerLP(DataHandlerLP):
             start_time=start_time,
             end_time=end_time,
             data_loader=loader,
-            infer_processors=infer_processors,
-            learn_processors=learn_processors,
-            shared_processors=shared_processors,
+            infer_processors=list(infer_processors or []),
+            learn_processors=list(learn_processors or []),
+            shared_processors=list(shared_processors or []),
             process_type=process_type,
             drop_raw=drop_raw,
             **kwargs,

@@ -182,6 +182,55 @@ def test_nff_loader_rejects_mixed_family_contracts(tmp_path: Path):
         )
 
 
+def test_nff_loader_filters_invalid_key_columns(tmp_path: Path):
+    warehouse = tmp_path / "warehouse"
+    timestamp = pd.Timestamp("2026-01-05T14:30:00Z")
+    frame = pd.DataFrame(
+        {
+            "trade_date": ["2026-01-05"] * 7,
+            "symbol_id": [1, 2, 3, 4, np.nan, 6, 7],
+            "symbol": [" AAPL ", None, "   ", "nan", "MSFT", "MSFT", "MSFT"],
+            "timestamp": [timestamp, timestamp, timestamp, timestamp, timestamp, pd.NaT, timestamp],
+            "available_time": [
+                timestamp + pd.Timedelta(minutes=1),
+                timestamp + pd.Timedelta(minutes=1),
+                timestamp + pd.Timedelta(minutes=1),
+                timestamp + pd.Timedelta(minutes=1),
+                timestamp + pd.Timedelta(minutes=1),
+                timestamp + pd.Timedelta(minutes=1),
+                pd.NaT,
+            ],
+            "close": np.arange(7, dtype="float64") + 10.0,
+        }
+    )
+    _publish_partition(
+        warehouse,
+        kind="canonical",
+        dataset="bars_1m",
+        schema="v1",
+        trade_date="2026-01-05",
+        frame=frame,
+    )
+    loader = NFFDataLoader(
+        warehouse_root=warehouse,
+        canonical_sets={"bars_1m": ["close"]},
+        execution={"frequency": "1min", "delay_bars": 0},
+        arrow_use_threads=False,
+    )
+
+    result = loader.load(
+        instruments="all",
+        start_time="2026-01-05T14:31:00Z",
+        end_time="2026-01-05T14:31:00Z",
+    )
+
+    assert list(result.index.get_level_values("instrument").unique()) == ["AAPL"]
+    assert len(result) == 1
+    assert result.index[0] == (pd.Timestamp("2026-01-05T14:31:00"), "AAPL")
+    assert result.iloc[0][("feature", "bars_1m__close")] == pytest.approx(10.0)
+    assert loader.last_load_report["sources"][0]["rows"] == 1
+
+
 def test_catalog_discovers_latest_schema_and_columns(tmp_path: Path):
     warehouse = tmp_path / "warehouse"
     _publish_partition(
