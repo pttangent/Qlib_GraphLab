@@ -6,23 +6,28 @@ on:
       - "qlib/contrib/data/nff.py"
       - "tests/test_nff_adapter.py"
       - "tests/test_nff_research_v2_2.py"
+      - "tests/test_nff_research_v2_4_fastpath.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
       - "configs/v2_1_neutralized_full.yaml"
+      - "configs/v2_4_optimized_full.yaml"
       - "nff_research/**"
       - "docs/component/nff_adapter.md"
       - ".github/workflows/nff-adapter.yml"
   push:
     branches:
       - "agent/nff-direct-qlib-adapter"
+      - "agent/nff-research-fastpath-v2-4"
       - "codex/**"
     paths:
       - "qlib/contrib/data/nff.py"
       - "tests/test_nff_adapter.py"
       - "tests/test_nff_research_v2_2.py"
+      - "tests/test_nff_research_v2_4_fastpath.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
       - "configs/v2_1_neutralized_full.yaml"
+      - "configs/v2_4_optimized_full.yaml"
       - "nff_research/**"
       - ".github/workflows/nff-adapter.yml"
 
@@ -45,7 +50,21 @@ jobs:
           cache: pip
       - name: Install Qlib and test dependencies
         run: python -m pip install -e ".[dev]"
-      - name: Run NFF adapter tests
-        run: python -m pytest -q tests/test_nff_adapter.py tests/test_nff_research_v2_2.py --tb=short
+      - name: Run NFF adapter and research tests
+        run: >-
+          python -m pytest -q
+          tests/test_nff_adapter.py
+          tests/test_nff_research_v2_2.py
+          tests/test_nff_research_v2_4_fastpath.py
+          --tb=short
       - name: Compile executable research entrypoints
-        run: python -m py_compile qlib/contrib/data/nff.py examples/nff_qlib_pipeline.py tests/test_nff_adapter.py tests/test_nff_research_v2_2.py nff_research/v2_multilabel_runner.py nff_research/v2_1_neutralized_runner.py
+        run: >-
+          python -m py_compile
+          qlib/contrib/data/nff.py
+          examples/nff_qlib_pipeline.py
+          tests/test_nff_adapter.py
+          tests/test_nff_research_v2_2.py
+          tests/test_nff_research_v2_4_fastpath.py
+          nff_research/v2_multilabel_runner.py
+          nff_research/v2_1_neutralized_runner.py
+          nff_research/v2_4_optimized_runner.py
