@@ -1,16 +1,17 @@
 run:
-  name: v2_1_neutralized_full_20260803_dst_contract_sleeves_r3
+  name: v2_1_neutralized_full_20260803_dst_contract_sleeves_r4_memopt
   script: nff_research/v2_1_neutralized_runner.py
   start_date: "2026-01-02"
   end_date: "2026-07-22"
   horizons: [15, 30, 60, 120]
-  initial_parallel: 8
-  max_parallel: 12
+  initial_parallel: 12
+  max_parallel: 16
   min_parallel: 4
   target_cpu_percent: 90
-  memory_high_water_percent: 88
+  memory_high_water_percent: 82
+  memory_min_available_gb: 24
   disk_free_floor_gb: 50
-  launch_batch_size: 4
+  launch_batch_size: 2
   retries: 1
   min_cross_section_n: 30
   allow_mixed_contracts: false

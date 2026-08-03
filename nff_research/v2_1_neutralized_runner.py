@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import importlib.util
 import json
@@ -275,6 +276,7 @@ def apply_config_args(args: argparse.Namespace, config: dict[str, Any], explicit
         "min_parallel": ("min_parallel", "--min-parallel"),
         "target_cpu_percent": ("target_cpu", "--target-cpu"),
         "memory_high_water_percent": ("memory_high_water", "--memory-high-water"),
+        "memory_min_available_gb": ("memory_min_available_gb", "--memory-min-available-gb"),
         "disk_free_floor_gb": ("disk_free_floor_gb", "--disk-free-floor-gb"),
         "launch_batch_size": ("launch_batch_size", "--launch-batch-size"),
         "retries": ("retries", "--retries"),
@@ -302,6 +304,7 @@ def apply_config_args(args: argparse.Namespace, config: dict[str, Any], explicit
         "min_parallel": args.min_parallel,
         "target_cpu": args.target_cpu,
         "memory_high_water": args.memory_high_water,
+        "memory_min_available_gb": args.memory_min_available_gb,
         "disk_free_floor_gb": args.disk_free_floor_gb,
         "launch_batch_size": args.launch_batch_size,
         "retries": args.retries,
@@ -883,21 +886,25 @@ def _pooled_ic(
     feature_columns: list[str],
     min_n: int,
 ) -> dict[str, dict[str, float]]:
-    ranked_features = feature_frame[feature_columns].groupby(level="datetime", sort=False).rank(method="average")
     ranked_label = label.groupby(level="datetime", sort=False).rank(method="average")
     out: dict[str, dict[str, float]] = {}
     y = ranked_label.to_numpy(dtype="float64")
-    for feature in feature_columns:
-        value, n = _corr(ranked_features[feature].to_numpy(dtype="float64"), y)
-        if n < min_n:
-            value = math.nan
-        out[feature] = {
-            "ic_minutes": int(ranked_label.groupby(level="datetime", sort=False).count().ge(min_n).sum()),
-            "ic_count": int(n),
-            "rank_ic_mean": float(value) if np.isfinite(value) else math.nan,
-            "rank_ic_std": math.nan,
-            "rank_ic_positive_ratio": float(value > 0) if np.isfinite(value) else math.nan,
-        }
+    ic_minutes = int(ranked_label.groupby(level="datetime", sort=False).count().ge(min_n).sum())
+    for start in range(0, len(feature_columns), 24):
+        chunk = feature_columns[start : start + 24]
+        ranked_features = feature_frame[chunk].groupby(level="datetime", sort=False).rank(method="average")
+        for feature in chunk:
+            value, n = _corr(ranked_features[feature].to_numpy(dtype="float64"), y)
+            if n < min_n:
+                value = math.nan
+            out[feature] = {
+                "ic_minutes": ic_minutes,
+                "ic_count": int(n),
+                "rank_ic_mean": float(value) if np.isfinite(value) else math.nan,
+                "rank_ic_std": math.nan,
+                "rank_ic_positive_ratio": float(value > 0) if np.isfinite(value) else math.nan,
+            }
+        del ranked_features
     return out
 
 
@@ -979,6 +986,7 @@ def minute_rank_ic_summary(
     min_n: int,
 ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
     feature_columns = analysis_features(features)
+    decile_cache_features = [column for column in CORE_DECILE_FEATURES if column in feature_columns]
     masks = universe_masks(features, controls)
     rows: list[dict[str, Any]] = []
     residual_cache: dict[tuple[str, str], tuple[pd.DataFrame, pd.Series]] = {}
@@ -1029,11 +1037,17 @@ def minute_rank_ic_summary(
             controls_sub = controls.loc[base_mask]
             feature_resid = _residualize_matrix(feature_frame[neutral_features], controls_sub, min_n=max(min_n, 40))
             label_resid = _residualize_matrix(label.to_frame(label_column), controls_sub, min_n=max(min_n, 40))[label_column]
-            residual_cache[(universe, label_column)] = (feature_resid, label_resid)
             neut_minute_stats = _minute_mean_ic(feature_resid, label_resid, neutral_features, min_n=min_n)
             neut_pooled_stats = _pooled_ic(feature_resid, label_resid, neutral_features, min_n=min_n)
             neutral_label_non_null = int(label_resid.notna().sum())
             neutral_coverage = feature_resid.notna().sum(axis=0) / max(1, neutral_label_non_null)
+            if family == "return_open_to_open" and decile_cache_features:
+                cache_columns = [column for column in decile_cache_features if column in feature_resid.columns]
+                if cache_columns:
+                    residual_cache[(universe, label_column)] = (
+                        feature_resid[cache_columns].copy(deep=True),
+                        label_resid.copy(deep=True),
+                    )
             append_ic_rows(
                 rows,
                 neut_minute_stats,
@@ -1058,6 +1072,8 @@ def minute_rank_ic_summary(
                 neutral_coverage,
                 neutral_label_non_null,
             )
+            del feature_resid, label_resid, controls_sub
+            gc.collect()
     return pd.DataFrame(rows), residual_cache
 
 
@@ -1327,12 +1343,16 @@ def run_date(
         end_time=end_time,
     )
     features = add_all_features(frame["feature"].sort_index())
+    del frame
+    gc.collect()
     labels, label_masks = build_labels_and_masks(features, horizons)
     controls = join_daily_controls(features, trade_date, controls_path)
     evaluated_features = analysis_features(features)
     registry = feature_registry(features, evaluated_features, trade_date)
     summary, residual_cache = minute_rank_ic_summary(features, labels, label_masks, controls, trade_date, min_n)
     deciles = decile_curves(features, labels, label_masks, controls, residual_cache, trade_date, min_n)
+    del residual_cache
+    gc.collect()
     portfolio = staggered_portfolio_proxy(
         features,
         labels,
@@ -1858,6 +1878,7 @@ def main() -> int:
     parser.add_argument("--min-parallel", type=int, default=4)
     parser.add_argument("--target-cpu", type=float, default=90.0)
     parser.add_argument("--memory-high-water", type=float, default=88.0)
+    parser.add_argument("--memory-min-available-gb", type=float, default=16.0)
     parser.add_argument("--disk-free-floor-gb", type=float, default=50.0)
     parser.add_argument("--retries", type=int, default=1)
     parser.add_argument("--launch-batch-size", type=int, default=4)
@@ -1969,7 +1990,7 @@ def main() -> int:
                 atomic_write_json(fail_dir / "scheduler_disk_floor.json", failure)
                 update_status(status_path, status="blocked_disk_free_floor", stage="paused", last_failure=failure, resources=resources)
                 return 3
-            elif resources["memory_percent"] >= args.memory_high_water:
+            elif resources["memory_percent"] >= args.memory_high_water or resources["memory_available_gb"] <= args.memory_min_available_gb:
                 current_parallel = max(args.min_parallel, max(1, current_parallel // 2))
             elif (
                 resources["cpu_percent"] < args.target_cpu - 12
@@ -1983,6 +2004,20 @@ def main() -> int:
 
         launched_this_cycle = 0
         while pending and len(running) < current_parallel and launched_this_cycle < max(1, args.launch_batch_size):
+            launch_resources = resource_snapshot(out_root)
+            if (
+                launch_resources["memory_percent"] >= args.memory_high_water
+                or launch_resources["memory_available_gb"] <= args.memory_min_available_gb
+            ):
+                update_status(
+                    status_path,
+                    parallel=current_parallel,
+                    running_workers=len(running),
+                    pending_units=len(pending),
+                    resources=launch_resources,
+                    admission_paused_reason="memory_guard",
+                )
+                break
             trade_date = pending.pop(0)
             out_dir, summary_path, success = unit_paths(out_root, trade_date)
             meta_path = out_dir / "meta.json"
