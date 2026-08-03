@@ -95,14 +95,47 @@ BUNDLE_MODEL_STEPS = [
     ("traditional_plus_minute_trade_hawkes", {"TRAD", "MINUTE_NVG", "TRADE_NVG", "HAWKES_LITE", "HAWKES_DERIVED"}),
 ]
 
-BUNDLE_MODEL_LABELS = {
-    "return_open_to_open",
-    "return_vwap_to_vwap",
-    "realized_volatility",
-    "liquidity_deterioration",
+BUNDLE_MODEL_LABEL_ROLES = {
+    "return_open_to_open": "diagnostic_execution_sensitive_return",
+    "return_vwap_to_vwap": "primary_execution_return",
+    "return_close_to_close": "diagnostic_execution_sensitive_return",
+    "liquidity_deterioration": "primary_state_prediction",
+    "realized_volatility": "primary_state_prediction",
+    "jump_tail_event": "diagnostic_jump_orthogonality",
+    "execution_cost_proxy": "diagnostic_mechanical_proxy",
+}
+BUNDLE_MODEL_LABELS = set(BUNDLE_MODEL_LABEL_ROLES)
+
+LABEL_CONTRACTS = {
+    "return_open_to_open__hN": "open[t+N+1] / open[t+1] - 1; decision at t; same-session only; requires entry and exit real bar volume > 0.",
+    "return_vwap_to_vwap__hN": "vwap[t+N+1] / vwap[t+1] - 1; decision at t; same-session only; requires entry and exit real bar volume > 0.",
+    "return_close_to_close__hN": "close[t+N+1] / close[t+1] - 1; decision at t; same-session only; requires entry and exit real bar volume > 0.",
+    "liquidity_deterioration__hN": "entry log liquidity minus mean future log liquidity; log liquidity = log1p(dollar_volume) + 0.25*log1p(trade_count); requires entry and exit real bar volume > 0.",
+    "realized_volatility__hN": "sqrt(sum of future one-minute close-return squared over horizon); requires entry and exit real bar volume > 0.",
+    "jump_tail_event__hN": "1 if future bipower-adjusted jump variation max(RV - pi/2 * BPV, 0) is above the same decision-minute cross-sectional 99th percentile, else 0; diagnostic jump-versus-volatility label; requires entry and exit real bar volume > 0.",
+    "execution_cost_proxy__hN": "future mean Amihud-style abs(1m close return)/(dollar_volume+1)*1e8; a mechanical consistency proxy, not empirical executable cost; requires entry and exit real bar volume > 0.",
 }
 
-RESEARCH_VERSION = "2.2"
+HAWKES_GATE_SPECS = [
+    {"name": "total_intensity", "column": "hawkes_lite__hawkes_total_intensity", "exclude_fraction": 0.20},
+    {"name": "shock_score", "column": "hawkes_lite__hawkes_shock_score_300s", "exclude_fraction": 0.20},
+    {"name": "endogenous_shock", "column": "hawkes_derived__hawkes_endogenous_shock_300s", "exclude_fraction": 0.20},
+    {"name": "exogenous_shock", "column": "hawkes_derived__hawkes_exogenous_shock_300s", "exclude_fraction": 0.20},
+    {"name": "persistence", "column": "hawkes_derived__hawkes_persistence", "exclude_fraction": 0.20},
+]
+MECHANICAL_PROXY_BASELINE_COLUMNS = [
+    "control__log_intraday_dollar_volume",
+    "control__realized_vol_60m",
+]
+TURNOVER_CONTROL_POLICY = {
+    "buffer_quantile": 0.10,
+    "min_hold_periods": 2,
+    "signal_change_threshold": 0.10,
+    "max_replacement_fraction": 0.50,
+}
+ENABLED_PORTFOLIO_VARIANTS: list[str] | None = None
+
+RESEARCH_VERSION = "2.3"
 BASE_RUNNER_VERSION = "2.1"
 OOF_FOLDS = 5
 OOF_RIDGE_ALPHA = 0.001
@@ -259,7 +292,7 @@ def load_yaml_config(path: str | None) -> dict[str, Any]:
 
 
 def apply_config_globals(config: dict[str, Any]) -> None:
-    global WAREHOUSE_ROOT, RESEARCH_ROOT, RAW_1M_ROOT, NFF_SRC_ROOT, CONTROLS_ROOT
+    global WAREHOUSE_ROOT, RESEARCH_ROOT, RAW_1M_ROOT, NFF_SRC_ROOT, CONTROLS_ROOT, TURNOVER_CONTROL_POLICY, ENABLED_PORTFOLIO_VARIANTS
     paths = config.get("local_paths", {}) if isinstance(config.get("local_paths", {}), dict) else {}
     if paths.get("warehouse_root"):
         WAREHOUSE_ROOT = Path(paths["warehouse_root"])
@@ -270,6 +303,18 @@ def apply_config_globals(config: dict[str, Any]) -> None:
     if paths.get("nodefactorfactory_src"):
         NFF_SRC_ROOT = Path(paths["nodefactorfactory_src"])
     CONTROLS_ROOT = RESEARCH_ROOT / "derived_inputs" / "daily_bar_controls_v2_1"
+    portfolio = config.get("portfolio_proxy", {}) if isinstance(config.get("portfolio_proxy", {}), dict) else {}
+    configured_turnover = portfolio.get("turnover_controlled_variant", {})
+    if isinstance(configured_turnover, dict):
+        TURNOVER_CONTROL_POLICY = {
+            "buffer_quantile": float(configured_turnover.get("no_trade_band_quantile", TURNOVER_CONTROL_POLICY["buffer_quantile"])),
+            "min_hold_periods": int(configured_turnover.get("minimum_hold_rebalances", TURNOVER_CONTROL_POLICY["min_hold_periods"])),
+            "signal_change_threshold": float(configured_turnover.get("signal_change_threshold_percentile", TURNOVER_CONTROL_POLICY["signal_change_threshold"])),
+            "max_replacement_fraction": float(configured_turnover.get("max_replacement_fraction_per_side", TURNOVER_CONTROL_POLICY["max_replacement_fraction"])),
+        }
+    configured_variants = portfolio.get("variants")
+    if isinstance(configured_variants, list):
+        ENABLED_PORTFOLIO_VARIANTS = [str(value) for value in configured_variants]
     for attr, value in {
         "WAREHOUSE_ROOT": WAREHOUSE_ROOT,
         "RESEARCH_ROOT": RESEARCH_ROOT,
@@ -350,11 +395,15 @@ def apply_config_args(args: argparse.Namespace, config: dict[str, Any], explicit
             "ridge_alpha": args.oof_ridge_alpha,
             "min_train_n": args.oof_min_train_n,
             "sample_policy": OOF_SAMPLE_POLICY,
+            "label_evidence_roles": BUNDLE_MODEL_LABEL_ROLES,
         },
         "portfolio_policy": {
             "primary_execution_label": "return_vwap_to_vwap",
             "applicability": {"15": [15], "30": [15, 30], "60": [30, 60], "120": [60]},
-            "accounting": "same_sleeve_turnover",
+            "accounting": "same_sleeve_turnover_with_turnover_controlled_diagnostic_variant",
+            "turnover_controlled_variant": TURNOVER_CONTROL_POLICY,
+            "hawkes_stock_level_gates": [spec["name"] for spec in HAWKES_GATE_SPECS],
+            "variants": ENABLED_PORTFOLIO_VARIANTS,
         },
         "paths": {
             "warehouse_root": str(WAREHOUSE_ROOT),
@@ -386,7 +435,7 @@ def build_run_contract(out_root: Path, controls_path: Path, effective_config: di
     runner_path = Path(__file__).resolve()
     dependency_path = Path(V2.__file__).resolve() if getattr(V2, "__file__", None) else None
     contract = {
-        "contract_version": "v2_2_20260803_oof_contract_v1",
+        "contract_version": "v2_3_20260803_turnover_gate_label_contract_v1",
         "created_utc": utc_now(),
         "git_commit": current_git_commit(),
         "runner_path": str(runner_path),
@@ -400,7 +449,7 @@ def build_run_contract(out_root: Path, controls_path: Path, effective_config: di
         "controls_sha256": file_sha256(controls_path),
         "warehouse_root": str(WAREHOUSE_ROOT),
         "session": effective_config["session"],
-        "portfolio_accounting": "same_sleeve_turnover",
+        "portfolio_accounting": "same_sleeve_turnover_with_turnover_controlled_diagnostic_variant",
         "research_version": effective_config["research_version"],
         "base_runner_version": effective_config["base_runner_version"],
         "incremental_validation": effective_config["incremental_validation"],
@@ -703,6 +752,9 @@ def build_labels_and_masks(frame: pd.DataFrame, horizons: list[int]) -> tuple[pd
     liquidity_log = np.log1p(dollar_volume) + 0.25 * np.log1p(trade_count)
     ret1 = group["bars_1m__close"].pct_change(fill_method=None).astype(float)
     amihud = ret1.abs() / (dollar_volume + 1.0) * 1e8
+    abs_ret1 = ret1.abs()
+    lag_abs_ret1 = abs_ret1.groupby(level="instrument", sort=False, group_keys=False).shift(1)
+    bipower_term = abs_ret1 * lag_abs_ret1
 
     for horizon in horizons:
         entry_volume = volume.groupby(level="instrument", sort=False, group_keys=False).shift(-1)
@@ -734,13 +786,14 @@ def build_labels_and_masks(frame: pd.DataFrame, horizons: list[int]) -> tuple[pd
         labels[name] = np.sqrt(future_var)
         masks[name] = real_volume_mask
 
-        future_abs_max = ret1.abs().groupby(level="instrument", sort=False, group_keys=False).transform(
-            lambda s, w=horizon: _future_roll(s.astype(float), w, "max")
+        future_bipower = bipower_term.groupby(level="instrument", sort=False, group_keys=False).transform(
+            lambda s, w=horizon: _future_roll(s.astype(float), w, "sum")
         )
-        threshold = future_abs_max.groupby(level="datetime", sort=False).transform(lambda s: s.quantile(0.99))
+        jump_variation = (future_var - (math.pi / 2.0) * future_bipower).clip(lower=0)
+        threshold = jump_variation.groupby(level="datetime", sort=False).transform(lambda s: s.quantile(0.99))
         name = f"jump_tail_event__h{horizon}"
-        labels[name] = (future_abs_max > threshold).astype("float32")
-        labels.loc[future_abs_max.isna() | threshold.isna(), name] = np.nan
+        labels[name] = (jump_variation > threshold).astype("float32")
+        labels.loc[jump_variation.isna() | threshold.isna(), name] = np.nan
         masks[name] = real_volume_mask
 
         name = f"execution_cost_proxy__h{horizon}"
@@ -750,6 +803,36 @@ def build_labels_and_masks(frame: pd.DataFrame, horizons: list[int]) -> tuple[pd
         masks[name] = real_volume_mask
 
     return labels.replace([np.inf, -np.inf], np.nan).astype("float32"), masks
+
+
+def label_dependency_diagnostics(labels: pd.DataFrame, trade_date: str) -> pd.DataFrame:
+    """Expose whether diagnostic labels collapse onto a volatility or proxy axis."""
+    rows: list[dict[str, Any]] = []
+    for horizon in HORIZONS:
+        realized = f"realized_volatility__h{horizon}"
+        jump = f"jump_tail_event__h{horizon}"
+        cost = f"execution_cost_proxy__h{horizon}"
+        for label_column, diagnostic in ((jump, "jump_vs_realized_volatility"), (cost, "execution_proxy_vs_realized_volatility")):
+            if realized not in labels.columns or label_column not in labels.columns:
+                continue
+            pair = labels[[realized, label_column]].replace([np.inf, -np.inf], np.nan).dropna()
+            correlation, count = _corr(
+                pair[realized].rank(method="average").to_numpy(dtype="float64"),
+                pair[label_column].rank(method="average").to_numpy(dtype="float64"),
+            )
+            rows.append(
+                {
+                    "trade_date": trade_date,
+                    "horizon_bars": horizon,
+                    "diagnostic": diagnostic,
+                    "label_a": realized,
+                    "label_b": label_column,
+                    "rank_correlation": correlation,
+                    "sample_count": count,
+                    "interpretation": "high correlation indicates the diagnostic label is not an independent research axis",
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def join_daily_controls(features: pd.DataFrame, trade_date: str, controls_path: Path) -> pd.DataFrame:
@@ -1495,23 +1578,37 @@ def bundle_incremental_model_screen(
         if family not in BUNDLE_MODEL_LABELS:
             continue
         horizon = int(horizon_text)
+        label_active_steps = active_steps
+        label_needed = needed
+        model_features = features
+        model_baseline = "representative_feature_bundles"
+        if family == "execution_cost_proxy":
+            baseline_columns = [column for column in MECHANICAL_PROXY_BASELINE_COLUMNS if column in controls.columns]
+            if len(baseline_columns) != len(MECHANICAL_PROXY_BASELINE_COLUMNS):
+                continue
+            model_features = pd.concat([features, controls[baseline_columns]], axis=1)
+            label_active_steps = [("mechanical_baseline_controls", baseline_columns)] + [
+                (f"mechanical_baseline_plus_{step}", baseline_columns + columns) for step, columns in active_steps
+            ]
+            label_needed = sorted({column for _, columns in label_active_steps for column in columns})
+            model_baseline = "current_log_intraday_dollar_volume_and_realized_vol_60m"
         base_mask = (universe_mask & labels[label_column].notna() & label_masks[label_column].fillna(False)).fillna(False)
         if int(base_mask.sum()) < min_n:
             continue
-        work = pd.concat([features.loc[base_mask, needed], labels.loc[base_mask, label_column].rename("label")], axis=1)
+        work = pd.concat([model_features.loc[base_mask, label_needed], labels.loc[base_mask, label_column].rename("label")], axis=1)
         minutes = work.index.get_level_values("datetime").minute
         work = work.loc[(minutes % 15) == 0]
-        prediction_parts: dict[str, list[pd.Series]] = {step: [] for step, _ in active_steps}
+        prediction_parts: dict[str, list[pd.Series]] = {step: [] for step, _ in label_active_steps}
         target_parts: list[pd.Series] = []
 
         for _, raw_block in work.groupby(level="datetime", sort=False):
-            block = raw_block.dropna(subset=needed + ["label"])
+            block = raw_block.dropna(subset=label_needed + ["label"])
             if len(block) < min_n:
                 continue
             symbols = block.index.get_level_values(-1).astype(str).to_numpy()
             step_predictions: dict[str, pd.Series] = {}
             failed = False
-            for step, columns in active_steps:
+            for step, columns in label_active_steps:
                 pred = _fixed_symbol_fold_oof_predict(
                     block[columns],
                     block["label"],
@@ -1524,10 +1621,10 @@ def bundle_incremental_model_screen(
                     failed = True
                     break
                 step_predictions[step] = pd.Series(pred, index=block.index, dtype="float64")
-            if failed or len(step_predictions) != len(active_steps):
+            if failed or len(step_predictions) != len(label_active_steps):
                 continue
             target_parts.append(block["label"].astype("float64"))
-            for step, _ in active_steps:
+            for step, _ in label_active_steps:
                 prediction_parts[step].append(step_predictions[step])
 
         if not target_parts:
@@ -1538,7 +1635,7 @@ def bundle_incremental_model_screen(
         previous_step: str | None = None
         previous_prediction: pd.Series | None = None
         previous_metrics: dict[str, Any] | None = None
-        for step, columns in active_steps:
+        for step, columns in label_active_steps:
             prediction = pd.concat(prediction_parts[step])
             metrics = _oof_prediction_metrics(prediction, target, min_n=min_n)
             deltas = {
@@ -1559,7 +1656,7 @@ def bundle_incremental_model_screen(
                     "step": step,
                     "previous_step": previous_step,
                     "feature_count": len(columns),
-                    "common_feature_count": len(needed),
+                    "common_feature_count": len(label_needed),
                     "fold_count": oof_folds,
                     "sampled_minutes": metrics["sampled_minutes"],
                     "sample_count": metrics["sample_count"],
@@ -1571,6 +1668,8 @@ def bundle_incremental_model_screen(
                     "mean_minute_mse": metrics["mean_minute_mse"],
                     **deltas,
                     "contract": "same-day 15m fixed-symbol-fold cross-sectional OOF ridge screen on an all-step common sample; not temporal OOS",
+                    "evidence_role": BUNDLE_MODEL_LABEL_ROLES[family],
+                    "model_baseline": model_baseline,
                 }
             )
             previous_step = step
@@ -1594,6 +1693,110 @@ def _portfolio_weights(block: pd.DataFrame, signal_column: str, quantile: float 
     weights.loc[long_index] = 0.5 / len(long_index)
     weights.loc[short_index] = -0.5 / len(short_index)
     return weights[weights != 0.0]
+
+
+def _instrument_series(values: pd.Series | None) -> pd.Series:
+    if values is None or values.empty:
+        return pd.Series(dtype="float64")
+    index = values.index
+    if isinstance(index, pd.MultiIndex):
+        symbols = index.get_level_values("instrument") if "instrument" in index.names else index.get_level_values(-1)
+    else:
+        symbols = index
+    result = pd.Series(values.to_numpy(dtype="float64"), index=pd.Index(symbols, dtype="object"), dtype="float64")
+    return result.groupby(level=0, sort=False).last()
+
+
+def _turnover_controlled_weights(
+    block: pd.DataFrame,
+    signal_column: str,
+    previous: pd.Series | None,
+    previous_signal_percentiles: pd.Series | None,
+    previous_hold_periods: dict[str, int] | None,
+    *,
+    quantile: float,
+    buffer_quantile: float,
+    min_hold_periods: int,
+    signal_change_threshold: float,
+    max_replacement_fraction: float,
+) -> tuple[pd.Series, dict[str, Any]]:
+    """Apply hysteresis, minimum holding, and a replacement budget to a tail target."""
+    if not 0.0 < quantile <= buffer_quantile < 0.5:
+        raise ValueError("require 0 < quantile <= buffer_quantile < 0.5")
+    if not 0.0 < max_replacement_fraction <= 1.0:
+        raise ValueError("max_replacement_fraction must be in (0, 1]")
+    target = _portfolio_weights(block, signal_column, quantile=quantile)
+    if target.empty:
+        return target, {"replacement_count": 0, "replacement_budget": 0, "minimum_hold_retained_count": 0}
+
+    current_ranks = block[signal_column].rank(method="first", pct=True)
+    current_ranks.index = current_ranks.index.get_level_values("instrument")
+    current_ranks = current_ranks.groupby(level=0, sort=False).last()
+    previous_weights = _instrument_series(previous)
+    previous_ranks = _instrument_series(previous_signal_percentiles)
+    hold_periods = previous_hold_periods or {}
+    target_by_symbol = _instrument_series(target)
+    selected_by_side: dict[int, list[str]] = {}
+    current_hold_periods: dict[str, int] = {}
+    replacement_count = 0
+    replacement_budget_total = 0
+    minimum_hold_retained = 0
+
+    for side, comparator in ((1, lambda values: values > 0), (-1, lambda values: values < 0)):
+        previous_side = previous_weights[comparator(previous_weights)]
+        target_side = target_by_symbol[comparator(target_by_symbol)]
+        previous_symbols = list(previous_side.index.astype(str))
+        target_symbols = list(target_side.index.astype(str))
+        protected: list[str] = []
+        for symbol in previous_symbols:
+            rank = current_ranks.get(symbol, math.nan)
+            age = int(hold_periods.get(symbol, 1))
+            in_buffer = rank >= 1.0 - buffer_quantile if side > 0 else rank <= buffer_quantile
+            if age < min_hold_periods or in_buffer:
+                protected.append(symbol)
+                if age < min_hold_periods:
+                    minimum_hold_retained += 1
+
+        retained = set(protected)
+        eligible_entries: list[tuple[float, str]] = []
+        for symbol in target_symbols:
+            if symbol in retained or symbol in previous_symbols:
+                continue
+            old_rank = previous_ranks.get(symbol, math.nan)
+            rank_change = abs(float(current_ranks.get(symbol, math.nan)) - float(old_rank)) if np.isfinite(old_rank) else math.inf
+            if rank_change >= signal_change_threshold:
+                eligible_entries.append((rank_change, symbol))
+        eligible_entries.sort(key=lambda item: (-item[0], item[1]))
+        replacement_budget = max(1, int(math.floor(max_replacement_fraction * max(len(previous_symbols), len(target_symbols), 1))))
+        replacement_budget_total += replacement_budget
+        selected_entries = [symbol for _, symbol in eligible_entries[:replacement_budget]]
+        replacement_count += len(selected_entries)
+        retained.update(selected_entries)
+
+        # Keep a prior target member if no new candidate cleared the trading threshold.
+        if not retained:
+            retained.update(target_symbols[:1])
+        selected_by_side[side] = sorted(retained)
+        for symbol in retained:
+            current_hold_periods[symbol] = int(hold_periods.get(symbol, 0)) + 1 if symbol in previous_symbols else 1
+
+    dt = block.index.get_level_values("datetime")[0]
+    values: dict[tuple[Any, str], float] = {}
+    for side, symbols in selected_by_side.items():
+        if not symbols:
+            continue
+        weight = 0.5 * side / len(symbols)
+        values.update({(dt, symbol): weight for symbol in symbols})
+    weights = pd.Series(values, dtype="float64")
+    weights.index = pd.MultiIndex.from_tuples(weights.index, names=["datetime", "instrument"])
+    return weights, {
+        "signal_percentiles": current_ranks,
+        "hold_periods": current_hold_periods,
+        "replacement_count": int(replacement_count),
+        "replacement_budget": int(replacement_budget_total),
+        "minimum_hold_retained_count": int(minimum_hold_retained),
+        "target_selected_count": int(len(target)),
+    }
 
 
 def _same_sleeve_turnover(current: pd.Series, previous: pd.Series | None) -> float:
@@ -1694,39 +1897,60 @@ def staggered_portfolio_proxy(
         {"name": "contrarian_q05_30m", "direction": -1.0, "quantile": 0.05, "rebalance_minutes": 30, "gate_pair_id": None, "gate_mode": "none"},
         {"name": "contrarian_q05_60m", "direction": -1.0, "quantile": 0.05, "rebalance_minutes": 60, "gate_pair_id": None, "gate_mode": "none"},
         {
-            "name": "contrarian_q05_30m_hawkes_pair_ungated",
+            "name": "contrarian_q05_30m_turnover_controlled",
             "direction": -1.0,
             "quantile": 0.05,
             "rebalance_minutes": 30,
-            "gate_pair_id": "hawkes_total_intensity_top20_q05_30m",
-            "gate_mode": "ungated_shared_sample",
-        },
-        {
-            "name": "contrarian_q05_30m_hawkes_liquidity_gate",
-            "direction": -1.0,
-            "quantile": 0.05,
-            "rebalance_minutes": 30,
-            "gate_pair_id": "hawkes_total_intensity_top20_q05_30m",
-            "gate_mode": "exclude_top20",
+            "gate_pair_id": None,
+            "gate_mode": "none",
+            "turnover_controlled": True,
         },
     ]
+    for gate_spec in HAWKES_GATE_SPECS:
+        pair_id = f"hawkes_{gate_spec['name']}_top20_q05_30m"
+        variants.extend(
+            [
+                {
+                    "name": f"contrarian_q05_30m_hawkes_{gate_spec['name']}_pair_ungated",
+                    "direction": -1.0,
+                    "quantile": 0.05,
+                    "rebalance_minutes": 30,
+                    "gate_pair_id": pair_id,
+                    "gate_mode": "ungated_shared_sample",
+                    "gate_column": gate_spec["column"],
+                    "exclude_fraction": gate_spec["exclude_fraction"],
+                },
+                {
+                    "name": f"contrarian_q05_30m_hawkes_{gate_spec['name']}_gate",
+                    "direction": -1.0,
+                    "quantile": 0.05,
+                    "rebalance_minutes": 30,
+                    "gate_pair_id": pair_id,
+                    "gate_mode": "exclude_top20",
+                    "gate_column": gate_spec["column"],
+                    "exclude_fraction": gate_spec["exclude_fraction"],
+                },
+            ]
+        )
+    if ENABLED_PORTFOLIO_VARIANTS is not None:
+        requested = set(ENABLED_PORTFOLIO_VARIANTS)
+        variants = [variant for variant in variants if variant["name"] in requested]
     label_candidates = [
         c
         for c in labels.columns
         if c.startswith("return_open_to_open__h") or c.startswith("return_vwap_to_vwap__h")
     ]
-    hawkes_gate_column = "hawkes_lite__hawkes_total_intensity"
+    hawkes_gate_columns = [spec["column"] for spec in HAWKES_GATE_SPECS if spec["column"] in features.columns]
     for label_column in label_candidates:
         family, horizon_text = label_column.rsplit("__h", 1)
         horizon = int(horizon_text)
         base_mask = (universe_mask & labels[label_column].notna() & label_masks[label_column].fillna(False)).fillna(False)
         if int(base_mask.sum()) < min_n:
             continue
-        extra_columns = [hawkes_gate_column] if hawkes_gate_column in features.columns else []
         adv20 = np.expm1(pd.to_numeric(controls.loc[base_mask, "control__log_adv20"], errors="coerce")).rename("__adv20")
         work = pd.concat(
             [
-                features.loc[base_mask, portfolio_features + extra_columns],
+                features.loc[base_mask, portfolio_features + hawkes_gate_columns],
                 labels.loc[base_mask, label_column].rename("label"),
                 adv20,
             ],
@@ -1737,9 +1961,12 @@ def staggered_portfolio_proxy(
             sleeve_count = max(1, int(math.ceil(horizon / variant_rebalance)))
             for feature in portfolio_features:
                 prev_by_sleeve: dict[int, pd.Series] = {}
+                previous_signal_by_sleeve: dict[int, pd.Series] = {}
+                previous_hold_periods_by_sleeve: dict[int, dict[str, int]] = {}
                 columns = [feature, "label", "__adv20"]
-                if variant["gate_pair_id"] is not None and hawkes_gate_column in work.columns:
-                    columns.append(hawkes_gate_column)
+                gate_column = variant.get("gate_column")
+                if variant["gate_pair_id"] is not None and gate_column in work.columns:
+                    columns.append(str(gate_column))
                 for dt, block in work[columns].dropna(subset=[feature, "label", "__adv20"]).groupby(level="datetime", sort=True):
                     rebalance_ordinal = _rebalance_ordinal(dt, variant_rebalance)
                     if rebalance_ordinal is None or len(block) < min_n:
@@ -1747,9 +1974,14 @@ def staggered_portfolio_proxy(
                     sleeve_id = rebalance_ordinal % sleeve_count
                     block = block.assign(__signal=block[feature].astype(float) * float(variant["direction"]))
                     if variant["gate_pair_id"] is not None:
-                        if hawkes_gate_column not in block.columns:
+                        if gate_column not in block.columns:
                             continue
-                        pre_gate, gated, gate_stats = _hawkes_gate_pair(block, hawkes_gate_column, "__adv20")
+                        pre_gate, gated, gate_stats = _hawkes_gate_pair(
+                            block,
+                            str(gate_column),
+                            "__adv20",
+                            exclude_fraction=float(variant.get("exclude_fraction", 0.20)),
+                        )
                         if variant["gate_mode"] == "exclude_top20":
                             block = gated
                         else:
@@ -1773,7 +2005,26 @@ def staggered_portfolio_proxy(
                         }
                     if len(block) < min_n:
                         continue
-                    weights = _portfolio_weights(block, "__signal", quantile=float(variant["quantile"]))
+                    turnover_state: dict[str, Any] = {
+                        "replacement_count": 0,
+                        "replacement_budget": 0,
+                        "minimum_hold_retained_count": 0,
+                    }
+                    if variant.get("turnover_controlled", False):
+                        weights, turnover_state = _turnover_controlled_weights(
+                            block,
+                            "__signal",
+                            prev_by_sleeve.get(sleeve_id),
+                            previous_signal_by_sleeve.get(sleeve_id),
+                            previous_hold_periods_by_sleeve.get(sleeve_id),
+                            quantile=float(variant["quantile"]),
+                            buffer_quantile=float(TURNOVER_CONTROL_POLICY["buffer_quantile"]),
+                            min_hold_periods=int(TURNOVER_CONTROL_POLICY["min_hold_periods"]),
+                            signal_change_threshold=float(TURNOVER_CONTROL_POLICY["signal_change_threshold"]),
+                            max_replacement_fraction=float(TURNOVER_CONTROL_POLICY["max_replacement_fraction"]),
+                        )
+                    else:
+                        weights = _portfolio_weights(block, "__signal", quantile=float(variant["quantile"]))
                     if weights.empty:
                         continue
                     long_mask = weights > 0
@@ -1804,6 +2055,10 @@ def staggered_portfolio_proxy(
                             "sleeve_count": sleeve_count,
                             "sleeve_id": sleeve_id,
                             "portfolio_accounting": "same_sleeve_turnover",
+                            "turnover_policy": "hysteresis_min_hold_signal_threshold_replacement_budget" if variant.get("turnover_controlled", False) else "full_tail_rebuild",
+                            "replacement_count": turnover_state["replacement_count"],
+                            "replacement_budget": turnover_state["replacement_budget"],
+                            "minimum_hold_retained_count": turnover_state["minimum_hold_retained_count"],
                             "long_count": int(long_mask.sum()),
                             "short_count": int(short_mask.sum()),
                             "selected_count": int(len(weights)),
@@ -1817,6 +2072,9 @@ def staggered_portfolio_proxy(
                         }
                     )
                     prev_by_sleeve[sleeve_id] = weights
+                    if variant.get("turnover_controlled", False):
+                        previous_signal_by_sleeve[sleeve_id] = turnover_state["signal_percentiles"]
+                        previous_hold_periods_by_sleeve[sleeve_id] = turnover_state["hold_periods"]
     return pd.DataFrame(rows)
 
 
@@ -1873,6 +2131,7 @@ def run_date(
     del frame
     gc.collect()
     labels, label_masks = build_labels_and_masks(features, horizons)
+    label_diagnostics = label_dependency_diagnostics(labels, trade_date)
     controls = join_daily_controls(features, trade_date, controls_path)
     evaluated_features = analysis_features(features)
     registry = feature_registry(features, evaluated_features, trade_date)
@@ -1915,6 +2174,9 @@ def run_date(
     if not incremental_models.empty:
         incremental_models.to_parquet(out_dir / "bundle_oof_incremental_screen.parquet", index=False)
         incremental_models.to_csv(out_dir / "bundle_oof_incremental_screen.csv", index=False)
+    if not label_diagnostics.empty:
+        label_diagnostics.to_parquet(out_dir / "label_dependency_diagnostics.parquet", index=False)
+        label_diagnostics.to_csv(out_dir / "label_dependency_diagnostics.csv", index=False)
 
     masks = universe_masks(features, controls)
     meta = {
@@ -1937,6 +2199,7 @@ def run_date(
         "decile_rows": int(len(deciles)),
         "portfolio_rows": int(len(portfolio)),
         "incremental_model_rows": int(len(incremental_models)),
+        "label_dependency_diagnostic_rows": int(len(label_diagnostics)),
         "incremental_validation": {
             "method": "fixed_symbol_fold_cross_sectional_oof_ridge",
             "folds": oof_folds,
@@ -1945,7 +2208,7 @@ def run_date(
             "min_train_n": oof_min_train_n,
             "sample_policy": OOF_SAMPLE_POLICY,
         },
-        "portfolio_accounting": "same_sleeve_turnover",
+        "portfolio_accounting": "same_sleeve_turnover_with_turnover_controlled_diagnostic_variant",
         "label_non_null": {column: int(labels[column].notna().sum()) for column in labels.columns},
         "label_real_volume_valid": {column: int(label_masks[column].fillna(False).sum()) for column in labels.columns},
         "universe_counts": {name: int(mask.sum()) for name, mask in masks.items()},
@@ -1961,15 +2224,8 @@ def run_date(
             "intraday_beta_60m_proxy",
         ],
         "sector_neutralization": "not_available_no_local_sector_reference_found",
-        "label_contract": {
-            "return_open_to_open__hN": "open[t+N+1] / open[t+1] - 1; decision at t; requires entry and exit real bar volume > 0; same-session only.",
-            "return_vwap_to_vwap__hN": "vwap[t+N+1] / vwap[t+1] - 1; decision at t; requires entry and exit real bar volume > 0; same-session only.",
-            "return_close_to_close__hN": "close[t+N+1] / close[t+1] - 1; decision at t; requires entry and exit real bar volume > 0; same-session only.",
-            "liquidity_deterioration__hN": "log liquidity at entry minute minus mean future log liquidity over horizon; log liquidity = log1p(dollar_volume) + 0.25*log1p(trade_count); requires entry and exit real bar volume > 0.",
-            "realized_volatility__hN": "sqrt(sum of future one-minute close-return squared over horizon); requires entry and exit real bar volume > 0.",
-            "jump_tail_event__hN": "1 if future max absolute one-minute close return over horizon is above the same decision-minute cross-sectional 99th percentile, else 0; requires entry and exit real bar volume > 0.",
-            "execution_cost_proxy__hN": "mean future Amihud-style abs(1m close return)/(dollar_volume+1)*1e8 over horizon; requires entry and exit real bar volume > 0.",
-        },
+        "label_contract": LABEL_CONTRACTS,
+        "label_evidence_roles": BUNDLE_MODEL_LABEL_ROLES,
         "universe_contract": {
             "own_feature_universe": "inner-join base universe loaded by the NFF/Qlib decision-time join; retained name is backwards-compatible and is not a true per-feature own universe.",
             "common_structural": "rows with non-null 30m price NVG asymmetry, 300s trade-flow terminal position, and Hawkes signed pressure.",
@@ -2062,7 +2318,7 @@ def write_research_contract(out_root: Path) -> None:
     incremental = effective.get("incremental_validation", {})
     portfolio_policy = effective.get("portfolio_policy", {})
     contract = {
-        "name": "NFF v2.2 neutralized OOF incremental validity and same-sleeve portfolio proxy",
+        "name": "NFF v2.3 neutralized OOF incremental validity and turnover-controlled sleeve portfolio proxy",
         "research_version": str(effective.get("research_version", RESEARCH_VERSION)),
         "base_runner_version": str(effective.get("base_runner_version", BASE_RUNNER_VERSION)),
         "rank_ic_methods": [
@@ -2082,31 +2338,26 @@ def write_research_contract(out_root: Path) -> None:
             "common_structural": "non-null structural price/trade/Hawkes representative features.",
             "liquid_common_adv20_top1000": "common_structural + price >= 5 + real current volume + PIT previous-20d ADV top 1000 + 20 lookback days + trade_count >= 1 + active/stale filters.",
         },
-        "label_contract": {
-            "return_open_to_open__hN": "open[t+N+1] / open[t+1] - 1.",
-            "return_vwap_to_vwap__hN": "vwap[t+N+1] / vwap[t+1] - 1.",
-            "return_close_to_close__hN": "close[t+N+1] / close[t+1] - 1.",
-            "liquidity_deterioration__hN": "log liquidity at entry minute minus mean future log liquidity.",
-            "realized_volatility__hN": "sqrt(sum future 1m close-return squared).",
-            "jump_tail_event__hN": "future max abs 1m close-return above same-minute cross-sectional 99th percentile.",
-            "execution_cost_proxy__hN": "future mean Amihud-style abs(1m close return)/(dollar_volume+1)*1e8.",
-        },
+        "label_contract": LABEL_CONTRACTS,
+        "label_evidence_roles": BUNDLE_MODEL_LABEL_ROLES,
         "portfolio_proxy_contract": {
             "rebalance": "Every 15 NY regular-session minutes.",
-            "portfolio": "Equal-weight long-short variants in liquid_common_adv20_top1000, including contrarian tails and Hawkes liquidity gate.",
+            "portfolio": "Equal-weight long-short variants in liquid_common_adv20_top1000, including contrarian tails, turnover-control hysteresis, and five Hawkes stock-level gates.",
             "execution_labels": ["return_open_to_open", "return_vwap_to_vwap"],
             "primary_execution_label": portfolio_policy.get("primary_execution_label", "return_vwap_to_vwap"),
             "applicability_policy": portfolio_policy.get(
                 "applicability", {"15": [15], "30": [15, 30], "60": [30, 60], "120": [60]}
             ),
-            "hawkes_gate": "Stock-level eligibility gate; paired variants share finite signal/label/Hawkes/PIT-ADV20 rows before deterministic top-20% intensity exclusion.",
+            "hawkes_gate": "Stock-level eligibility gates for total intensity, shock score, endogenous shock, exogenous shock, and persistence; paired variants share finite signal/label/Hawkes/PIT-ADV20 rows before deterministic top-20% exclusion.",
             "capital": "Same-sleeve accounting; for horizon H and rebalance R, ceil(H/R) sleeves are tracked and turnover compares a sleeve only with its own prior weights.",
             "cost": "net_return = gross_return - turnover * cost_bps_per_turnover / 10000.",
+            "turnover_control": "Diagnostic 30m q05 contrarian variant keeps positions inside a 10% no-trade band, enforces a two-rebalance minimum hold, requires 10 percentile points of signal movement for entries, and admits at most 50% replacements per side.",
         },
         "incremental_model_contract": {
             "name": "bundle_oof_incremental_screen",
             "steps": [step for step, _ in BUNDLE_MODEL_STEPS],
             "labels": sorted(BUNDLE_MODEL_LABELS),
+            "label_evidence_roles": BUNDLE_MODEL_LABEL_ROLES,
             "method": "same-day 15m fixed-symbol-fold cross-sectional OOF ridge; not temporal OOS",
             "folds": int(incremental.get("folds", OOF_FOLDS)),
             "fold_algorithm": incremental.get("fold_algorithm", OOF_FOLD_ALGORITHM),
@@ -2120,18 +2371,19 @@ def write_research_contract(out_root: Path) -> None:
             "regular_session": "09:30 <= local_time < 16:00",
         },
         "qlib_recorder_assessment": {
-            "status": "not_used_for_v2_2_validity_runner",
+            "status": "not_used_for_v2_3_validity_runner",
             "reason": "The current artifact is an intraday factor validity and sleeve-proxy research pass. Qlib Recorder can be added after predictions/positions are materialized, but custom overlapping sleeve accounting is clearer in a dedicated simulator.",
             "recommended_next_step": "Export prediction, target weight, executed sleeve weight, and realized return tables; then attach them to a Qlib Recorder or a custom recorder-compatible artifact store.",
         },
         "known_limits": [
             "Sector neutralization is not applied because no local sector reference file was found.",
             "Intraday beta is a 60-minute proxy, not a 20-day market beta.",
-            "Portfolio output is a transparent same-sleeve proxy, not a full Qlib Recorder/model backtest.",
+            "Portfolio output is a transparent same-sleeve proxy, not a full Qlib Recorder/model backtest; it does not model price drift, borrow, spreads, impact, partial fills, or account-level netting across sleeves.",
+            "Execution-cost proxy is a mechanical label consistency check, not an observed quoted/effective/realized-spread or market-impact estimate.",
             "July 2026 should be read as a stress slice, not true out-of-sample.",
         ],
     }
-    atomic_write_json(out_root / "research_contract_v2_2.json", contract)
+    atomic_write_json(out_root / "research_contract_v2_3.json", contract)
 
 
 def aggregate(out_root: Path) -> None:
@@ -2282,6 +2534,26 @@ def aggregate(out_root: Path) -> None:
             .sort_values(["evaluated", "bundle", "feature"], ascending=[False, True, True])
         )
         registry_summary.to_csv(agg / "feature_registry_summary.csv", index=False)
+
+    label_diagnostic_frames = [
+        pd.read_parquet(path) for path in sorted(base.glob("date=*/label_dependency_diagnostics.parquet"))
+    ]
+    if label_diagnostic_frames:
+        label_diagnostics = pd.concat(label_diagnostic_frames, ignore_index=True)
+        label_diagnostics.to_parquet(agg / "label_dependency_diagnostics_by_date.parquet", index=False)
+        label_diagnostics.to_csv(agg / "label_dependency_diagnostics_by_date.csv", index=False)
+        label_diagnostic_overall = (
+            label_diagnostics.groupby(["horizon_bars", "diagnostic", "label_a", "label_b"], dropna=False)
+            .agg(
+                dates=("trade_date", "nunique"),
+                mean_rank_correlation=("rank_correlation", "mean"),
+                median_rank_correlation=("rank_correlation", "median"),
+                mean_sample_count=("sample_count", "mean"),
+            )
+            .reset_index()
+        )
+        label_diagnostic_overall.to_parquet(agg / "label_dependency_diagnostics_overall.parquet", index=False)
+        label_diagnostic_overall.to_csv(agg / "label_dependency_diagnostics_overall.csv", index=False)
 
     decile_frames = [pd.read_parquet(path) for path in sorted(base.glob("date=*/decile_curves.parquet"))]
     if decile_frames:
@@ -2503,7 +2775,7 @@ def aggregate(out_root: Path) -> None:
             pair_overall.to_csv(agg / "hawkes_gate_pair_comparison_overall.csv", index=False)
 
     report = [
-        "# NFF v2.2 neutralized OOF research report",
+        "# NFF v2.3 neutralized OOF research report",
         "",
         f"- Finished UTC: {utc_now()}",
         "- RankIC method: v1-compatible minute-level cross-sectional Spearman IC, then daily mean over minutes.",
@@ -2517,7 +2789,44 @@ def aggregate(out_root: Path) -> None:
         "- Sector neutralization: not applied because no local sector reference file was found in the warehouse scan; this is recorded in each date meta.",
         "- July should be read as a stress slice, not true OOS.",
     ]
-    (agg / "final_report_v2_2.md").write_text("\n".join(report) + "\n", encoding="utf-8")
+    (agg / "final_report_v2_3.md").write_text("\n".join(report) + "\n", encoding="utf-8")
+
+
+def adaptive_parallel_target(
+    resources: dict[str, Any],
+    *,
+    current_parallel: int,
+    min_parallel: int,
+    max_parallel: int,
+    target_cpu: float,
+    memory_high_water: float,
+    memory_min_available_gb: float,
+    safe_streak: int,
+) -> tuple[int, str]:
+    """Change one worker at a time after sustained headroom; shed capacity quickly."""
+    if (
+        float(resources["memory_percent"]) >= memory_high_water
+        or float(resources["memory_available_gb"]) <= memory_min_available_gb
+    ):
+        return max(min_parallel, max(1, current_parallel // 2)), "memory_guard"
+    if float(resources["cpu_percent"]) >= 98.0 and current_parallel > min_parallel:
+        return current_parallel - 1, "cpu_saturation"
+    if (
+        float(resources["cpu_percent"]) >= target_cpu - 12.0
+        or float(resources["memory_percent"]) >= memory_high_water - 15.0
+        or current_parallel >= max_parallel
+    ):
+        return current_parallel, "within_target_or_limit"
+    if safe_streak < 3:
+        return current_parallel, "awaiting_safe_streak"
+    worker_count = int(resources.get("worker_process_count", 0))
+    worker_rss = float(resources.get("worker_rss_total_gb", 0.0))
+    per_worker_rss = worker_rss / worker_count if worker_count > 0 and worker_rss > 0 else 0.0
+    projected_new_worker_rss = per_worker_rss * 1.30
+    available_headroom = float(resources["memory_available_gb"]) - memory_min_available_gb
+    if projected_new_worker_rss > 0 and available_headroom < projected_new_worker_rss:
+        return current_parallel, "worker_rss_projection_guard"
+    return min(max_parallel, current_parallel + 1), "cpu_headroom_projected_worker_rss"
 
 
 def resource_snapshot(out_root: Path) -> dict[str, Any]:
@@ -2632,7 +2941,7 @@ def main() -> int:
     config = load_yaml_config(args.config)
     apply_config_globals(config)
     effective_config = apply_config_args(args, config, explicit_flags)
-    out_root = Path(args.out_root) if args.out_root else RESEARCH_ROOT / "runs" / f"v2_2_oof_{args.run_id}"
+    out_root = Path(args.out_root) if args.out_root else RESEARCH_ROOT / "runs" / f"v2_3_oof_{args.run_id}"
     out_root.mkdir(parents=True, exist_ok=True)
     controls_path = Path(args.controls_path) if args.controls_path else build_daily_controls(
         args.start_date,
@@ -2685,6 +2994,7 @@ def main() -> int:
 
     status_path = out_root / "status.json"
     resource_log_path = out_root / "resource_samples.ndjson"
+    tuning_log_path = out_root / "scheduler_tuning.ndjson"
     dates = load_dates(args.start_date, args.end_date)
     total = len(dates)
     completed = 0
@@ -2694,6 +3004,7 @@ def main() -> int:
     running: dict[str, dict[str, Any]] = {}
     current_parallel = max(args.min_parallel, min(args.parallel, args.max_parallel))
     last_tune = 0.0
+    safe_streak = 0
     update_status(
         status_path,
         pid=os.getpid(),
@@ -2732,17 +3043,37 @@ def main() -> int:
                 atomic_write_json(fail_dir / "scheduler_disk_floor.json", failure)
                 update_status(status_path, status="blocked_disk_free_floor", stage="paused", last_failure=failure, resources=resources)
                 return 3
-            elif resources["memory_percent"] >= args.memory_high_water or resources["memory_available_gb"] <= args.memory_min_available_gb:
-                current_parallel = max(args.min_parallel, max(1, current_parallel // 2))
-            elif (
-                resources["cpu_percent"] < args.target_cpu - 12
-                and resources["memory_percent"] < args.memory_high_water - 15
-                and current_parallel < args.max_parallel
-                and len(running) >= current_parallel
-            ):
-                current_parallel = min(args.max_parallel, current_parallel + 2)
-            elif resources["cpu_percent"] > 98 and current_parallel > args.min_parallel:
-                current_parallel = max(args.min_parallel, current_parallel - 1)
+            else:
+                safe_sample = (
+                    resources["memory_percent"] < args.memory_high_water - 15
+                    and resources["memory_available_gb"] > args.memory_min_available_gb
+                    and resources["cpu_percent"] < 98.0
+                    and len(running) >= current_parallel
+                )
+                safe_streak = safe_streak + 1 if safe_sample else 0
+                previous_parallel = current_parallel
+                current_parallel, tune_reason = adaptive_parallel_target(
+                    resources,
+                    current_parallel=current_parallel,
+                    min_parallel=args.min_parallel,
+                    max_parallel=args.max_parallel,
+                    target_cpu=args.target_cpu,
+                    memory_high_water=args.memory_high_water,
+                    memory_min_available_gb=args.memory_min_available_gb,
+                    safe_streak=safe_streak,
+                )
+                append_jsonl(
+                    tuning_log_path,
+                    {
+                        "sample_utc": utc_now(),
+                        "previous_parallel": previous_parallel,
+                        "target_parallel": current_parallel,
+                        "reason": tune_reason,
+                        "safe_streak": safe_streak,
+                        "running_workers": len(running),
+                        "resources": resources,
+                    },
+                )
 
         launched_this_cycle = 0
         while pending and len(running) < current_parallel and launched_this_cycle < max(1, args.launch_batch_size):

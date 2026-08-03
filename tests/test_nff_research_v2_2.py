@@ -313,6 +313,65 @@ def test_hawkes_gate_pair_uses_shared_sample_and_deterministic_top_20_percent():
     assert stats["eligible_adv20_kept_ratio"] == pytest.approx(7 / 9)
 
 
+def test_hawkes_gate_catalog_covers_intensity_shock_endogeneity_exogeneity_and_persistence():
+    gate_columns = {spec["column"] for spec in runner.HAWKES_GATE_SPECS}
+
+    assert gate_columns == {
+        "hawkes_lite__hawkes_total_intensity",
+        "hawkes_lite__hawkes_shock_score_300s",
+        "hawkes_derived__hawkes_endogenous_shock_300s",
+        "hawkes_derived__hawkes_exogenous_shock_300s",
+        "hawkes_derived__hawkes_persistence",
+    }
+    assert all(spec["exclude_fraction"] == pytest.approx(0.20) for spec in runner.HAWKES_GATE_SPECS)
+
+
+def test_turnover_controlled_weights_keep_minimum_hold_and_cap_replacements():
+    symbols = _symbols(20)
+    index = pd.MultiIndex.from_arrays(
+        [[pd.Timestamp("2026-07-06T13:30:00Z")] * len(symbols), symbols],
+        names=["datetime", "instrument"],
+    )
+    block = pd.DataFrame({"signal": np.arange(len(symbols), dtype=float)}, index=index)
+    previous = pd.Series({symbols[0]: 0.25, symbols[-1]: -0.25})
+    previous.index = pd.MultiIndex.from_product(
+        [[pd.Timestamp("2026-07-06T13:00:00Z")], previous.index], names=["datetime", "instrument"]
+    )
+    previous_signal = pd.Series({symbols[0]: 0.9, symbols[-1]: 0.1})
+    previous_hold = {symbols[0]: 1, symbols[-1]: 1}
+
+    weights, state = runner._turnover_controlled_weights(
+        block,
+        "signal",
+        previous,
+        previous_signal,
+        previous_hold,
+        quantile=0.05,
+        buffer_quantile=0.10,
+        min_hold_periods=2,
+        signal_change_threshold=0.10,
+        max_replacement_fraction=0.50,
+    )
+
+    held_symbols = set(weights.index.get_level_values("instrument"))
+    assert {symbols[0], symbols[-1]}.issubset(held_symbols)
+    assert state["replacement_count"] <= state["replacement_budget"]
+    assert state["minimum_hold_retained_count"] == 2
+
+
+def test_label_evidence_roles_keep_jump_and_cost_diagnostic_but_screen_them_oof():
+    assert set(runner.BUNDLE_MODEL_LABEL_ROLES) == set(runner.LABEL_FAMILIES)
+    assert runner.BUNDLE_MODEL_LABEL_ROLES["jump_tail_event"] == "diagnostic_jump_orthogonality"
+    assert runner.BUNDLE_MODEL_LABEL_ROLES["execution_cost_proxy"] == "diagnostic_mechanical_proxy"
+
+
+def test_jump_tail_contract_uses_bipower_jump_variation_not_raw_future_maximum():
+    contract = runner.LABEL_CONTRACTS["jump_tail_event__hN"]
+
+    assert "bipower" in contract.lower()
+    assert "max absolute" not in contract.lower()
+
+
 def test_vwap_portfolio_is_primary_and_emits_gate_capacity_fields():
     features, labels, masks, controls = _bundle_screen_inputs(n_symbols=100, minutes=2)
 
@@ -336,13 +395,24 @@ def test_vwap_portfolio_is_primary_and_emits_gate_capacity_fields():
     }.issubset(result.columns)
 
 
-def test_v2_2_config_freezes_oof_contract():
+def test_portfolio_variant_catalog_is_configurable(monkeypatch: pytest.MonkeyPatch):
+    features, labels, masks, controls = _bundle_screen_inputs(n_symbols=100, minutes=2)
+    monkeypatch.setattr(runner, "ENABLED_PORTFOLIO_VARIANTS", ["contrarian_q05_30m_turnover_controlled"])
+
+    result = runner.staggered_portfolio_proxy(features, labels, masks, controls, "2026-07-06", min_n=30)
+
+    assert set(result["portfolio_variant"]) == {"contrarian_q05_30m_turnover_controlled"}
+
+
+def test_v2_3_config_freezes_oof_contract():
     config_path = Path(__file__).resolve().parents[1] / "configs" / "v2_1_neutralized_full.yaml"
     config = runner.load_yaml_config(str(config_path))
 
-    assert config["research_version"] == "2.2"
+    assert config["research_version"] == "2.3"
     assert config["base_runner_version"] == "2.1"
-    assert config["incremental_validation"] == {
+    assert {key: config["incremental_validation"][key] for key in [
+        "method", "folds", "fold_algorithm", "ridge_alpha", "min_train_n", "sample_policy"
+    ]} == {
         "method": "fixed_symbol_fold_cross_sectional_oof_ridge",
         "folds": 5,
         "fold_algorithm": "sha256_normalized_symbol_first8_big_endian_modulo",
@@ -396,7 +466,7 @@ def test_run_contract_hash_changes_with_oof_policy_and_rejects_old_root(tmp_path
     controls = tmp_path / "controls.parquet"
     controls.write_bytes(b"controls")
     base = {
-        "research_version": "2.2",
+        "research_version": "2.3",
         "base_runner_version": "2.1",
         "session": {"timezone": "America/New_York"},
         "incremental_validation": {
@@ -421,11 +491,11 @@ def test_run_contract_hash_changes_with_oof_policy_and_rejects_old_root(tmp_path
         runner.build_run_contract(old_root, controls, base)
 
 
-def test_v2_2_research_contract_is_explicit(tmp_path: Path):
+def test_v2_3_research_contract_is_explicit(tmp_path: Path):
     runner.write_research_contract(tmp_path)
 
-    contract = json.loads((tmp_path / "research_contract_v2_2.json").read_text(encoding="utf-8"))
-    assert contract["research_version"] == "2.2"
+    contract = json.loads((tmp_path / "research_contract_v2_3.json").read_text(encoding="utf-8"))
+    assert contract["research_version"] == "2.3"
     assert contract["base_runner_version"] == "2.1"
     assert contract["incremental_model_contract"]["folds"] == 5
     assert contract["incremental_model_contract"]["ridge_alpha"] == 0.001
@@ -437,7 +507,7 @@ def test_research_contract_uses_effective_oof_overrides(tmp_path: Path):
     (tmp_path / "effective_config.json").write_text(
         json.dumps(
             {
-                "research_version": "2.2",
+                "research_version": "2.3",
                 "base_runner_version": "2.1",
                 "incremental_validation": {
                     "folds": 4,
@@ -454,13 +524,13 @@ def test_research_contract_uses_effective_oof_overrides(tmp_path: Path):
 
     runner.write_research_contract(tmp_path)
 
-    contract = json.loads((tmp_path / "research_contract_v2_2.json").read_text(encoding="utf-8"))
+    contract = json.loads((tmp_path / "research_contract_v2_3.json").read_text(encoding="utf-8"))
     assert contract["incremental_model_contract"]["folds"] == 4
     assert contract["incremental_model_contract"]["ridge_alpha"] == 0.25
     assert contract["incremental_model_contract"]["min_train_n"] == 55
 
 
-def _write_v2_2_aggregate_inputs(root: Path) -> tuple[list[float], list[float]]:
+def _write_v2_3_aggregate_inputs(root: Path) -> tuple[list[float], list[float]]:
     metric_values = [0.01, 0.02, 0.00, 0.03, 0.015, 0.025]
     delta_values = [0.002, 0.004, -0.001, 0.003, 0.001, 0.005]
     for day, (metric, delta) in enumerate(zip(metric_values, delta_values), start=1):
@@ -548,15 +618,15 @@ def _write_v2_2_aggregate_inputs(root: Path) -> tuple[list[float], list[float]]:
     return metric_values, delta_values
 
 
-def test_aggregate_emits_v2_2_primary_diagnostic_and_gate_pair_outputs(tmp_path: Path):
-    _write_v2_2_aggregate_inputs(tmp_path)
+def test_aggregate_emits_v2_3_primary_diagnostic_and_gate_pair_outputs(tmp_path: Path):
+    _write_v2_3_aggregate_inputs(tmp_path)
 
     runner.aggregate(tmp_path)
 
     aggregate = tmp_path / "02_neutralized_factor_diagnostics" / "_aggregate"
     expected = [
-        tmp_path / "research_contract_v2_2.json",
-        aggregate / "final_report_v2_2.md",
+        tmp_path / "research_contract_v2_3.json",
+        aggregate / "final_report_v2_3.md",
         aggregate / "staggered_portfolio_proxy_primary_vwap_overall.csv",
         aggregate / "staggered_portfolio_proxy_primary_vwap_overall.parquet",
         aggregate / "staggered_portfolio_proxy_diagnostic_open_overall.csv",
@@ -577,7 +647,7 @@ def test_aggregate_emits_v2_2_primary_diagnostic_and_gate_pair_outputs(tmp_path:
 
 
 def test_aggregate_hac_uses_daily_oof_metric_and_delta_series_directly(tmp_path: Path):
-    metric_values, delta_values = _write_v2_2_aggregate_inputs(tmp_path)
+    metric_values, delta_values = _write_v2_3_aggregate_inputs(tmp_path)
 
     runner.aggregate(tmp_path)
 
@@ -590,7 +660,7 @@ def test_aggregate_hac_uses_daily_oof_metric_and_delta_series_directly(tmp_path:
 
 
 def test_gate_comparison_uses_only_exactly_paired_cohorts(tmp_path: Path):
-    _write_v2_2_aggregate_inputs(tmp_path)
+    _write_v2_3_aggregate_inputs(tmp_path)
     first = tmp_path / "02_neutralized_factor_diagnostics" / "date=2026-06-01" / "staggered_portfolio_proxy.parquet"
     portfolio = pd.read_parquet(first)
     extra = portfolio.iloc[[0]].copy()
@@ -614,6 +684,36 @@ def test_resource_snapshot_reports_worker_rss(tmp_path: Path):
     assert snapshot["worker_process_count"] >= 0
     assert snapshot["worker_rss_total_gb"] >= 0
     assert snapshot["worker_rss_max_gb"] >= 0
+
+
+def test_adaptive_parallel_target_requires_safe_streak_and_respects_worker_rss_projection():
+    safe_resources = {
+        "cpu_percent": 60.0,
+        "memory_percent": 50.0,
+        "memory_available_gb": 48.0,
+        "worker_process_count": 12,
+        "worker_rss_total_gb": 48.0,
+    }
+    unchanged, reason = runner.adaptive_parallel_target(
+        safe_resources, current_parallel=12, min_parallel=4, max_parallel=16, target_cpu=90.0,
+        memory_high_water=78.0, memory_min_available_gb=32.0, safe_streak=2,
+    )
+    assert unchanged == 12
+    assert reason == "awaiting_safe_streak"
+
+    grown, reason = runner.adaptive_parallel_target(
+        safe_resources, current_parallel=12, min_parallel=4, max_parallel=16, target_cpu=90.0,
+        memory_high_water=78.0, memory_min_available_gb=32.0, safe_streak=3,
+    )
+    assert grown == 13
+    assert reason == "cpu_headroom_projected_worker_rss"
+
+    pressured, reason = runner.adaptive_parallel_target(
+        {**safe_resources, "memory_percent": 80.0}, current_parallel=12, min_parallel=4, max_parallel=16,
+        target_cpu=90.0, memory_high_water=78.0, memory_min_available_gb=32.0, safe_streak=3,
+    )
+    assert pressured == 6
+    assert reason == "memory_guard"
 
 
 def test_oof_subprocess_does_not_retain_minute_arrays():

@@ -1,8 +1,8 @@
-research_version: "2.2"
+research_version: "2.3"
 base_runner_version: "2.1"
 
 run:
-  name: v2_2_oof_incremental_full_20260803_vwap_gate
+  name: v2_3_oof_incremental_full_20260803_turnover_gates
   script: nff_research/v2_1_neutralized_runner.py
   start_date: "2026-01-02"
   end_date: "2026-07-22"
@@ -78,16 +78,37 @@ portfolio_proxy:
   universe: liquid_common_adv20_top1000
   construction: equal_weight_long_short_variants
   cost_bps_per_turnover: 1.0
-  accounting: same_sleeve_turnover
+  accounting: same_sleeve_turnover_with_turnover_controlled_diagnostic_variant
   variants:
     - long_high_q10_15m
     - contrarian_q10_15m
     - contrarian_q05_30m
     - contrarian_q05_60m
-    - contrarian_q05_30m_hawkes_pair_ungated
-    - contrarian_q05_30m_hawkes_liquidity_gate
+    - contrarian_q05_30m_turnover_controlled
+    - contrarian_q05_30m_hawkes_total_intensity_pair_ungated
+    - contrarian_q05_30m_hawkes_total_intensity_gate
+    - contrarian_q05_30m_hawkes_shock_score_pair_ungated
+    - contrarian_q05_30m_hawkes_shock_score_gate
+    - contrarian_q05_30m_hawkes_endogenous_shock_pair_ungated
+    - contrarian_q05_30m_hawkes_endogenous_shock_gate
+    - contrarian_q05_30m_hawkes_exogenous_shock_pair_ungated
+    - contrarian_q05_30m_hawkes_exogenous_shock_gate
+    - contrarian_q05_30m_hawkes_persistence_pair_ungated
+    - contrarian_q05_30m_hawkes_persistence_gate
   primary_execution_label: return_vwap_to_vwap
   note: "Proxy only; not a full Qlib Recorder/model backtest. Horizon H uses ceil(H/rebalance_minutes) sleeves and compares turnover only within the same sleeve."
+  turnover_controlled_variant:
+    target: contrarian_q05_30m
+    no_trade_band_quantile: 0.10
+    minimum_hold_rebalances: 2
+    signal_change_threshold_percentile: 0.10
+    max_replacement_fraction_per_side: 0.50
+  hawkes_stock_level_gates:
+    - total_intensity_top20
+    - shock_score_top20
+    - endogenous_shock_top20
+    - exogenous_shock_top20
+    - persistence_top20
 
 session:
   timezone: America/New_York
@@ -100,3 +121,11 @@ incremental_validation:
   ridge_alpha: 0.001
   min_train_n: 40
   sample_policy: largest_step_common_complete_case_all_steps_or_drop_minute
+  label_evidence_roles:
+    return_vwap_to_vwap: primary_execution_return
+    return_open_to_open: diagnostic_execution_sensitive_return
+    return_close_to_close: diagnostic_execution_sensitive_return
+    liquidity_deterioration: primary_state_prediction
+    realized_volatility: primary_state_prediction
+    jump_tail_event: diagnostic_jump_orthogonality
+    execution_cost_proxy: diagnostic_mechanical_proxy
