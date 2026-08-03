@@ -175,8 +175,16 @@ def _online_corr_state() -> dict[str, float]:
     return {"n": 0.0, "sx": 0.0, "sy": 0.0, "sxx": 0.0, "syy": 0.0, "sxy": 0.0}
 
 
-def _update_corr_state(state: dict[str, float], x: np.ndarray, y: np.ndarray) -> None:
-    valid = np.isfinite(x) & np.isfinite(y)
+def _update_corr_state(
+    state: dict[str, float], x: np.ndarray, y: np.ndarray, valid: np.ndarray | None = None
+) -> None:
+    # Use the pre-transform validity mask when supplied.  Percentile ranking
+    # must not alter the sample contract through a divide-by-zero or an
+    # implementation-specific non-finite intermediate.
+    if valid is None:
+        valid = np.isfinite(x) & np.isfinite(y)
+    else:
+        valid = np.asarray(valid, dtype=bool)
     if not valid.any():
         return
     xv = x[valid].astype("float64", copy=False)
@@ -240,7 +248,8 @@ def ranked_ic_stats_once(
             minute_counts[feature] += int(count)
             if np.isfinite(corr):
                 minute_values[feature].append(float(corr))
-            _update_corr_state(pooled[feature], xv_pooled[:, idx], yv_pooled)
+            pooled_valid = np.isfinite(xv[:, idx]) & np.isfinite(yv)
+            _update_corr_state(pooled[feature], xv_pooled[:, idx], yv_pooled, valid=pooled_valid)
 
     minute_out: dict[str, dict[str, float]] = {}
     pooled_out: dict[str, dict[str, float]] = {}
