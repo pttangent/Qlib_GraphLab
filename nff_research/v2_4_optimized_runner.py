@@ -218,18 +218,29 @@ def ranked_ic_stats_once(
         if int(y.notna().sum()) < min_n:
             continue
         admitted_minutes += 1
-        ranked_y = y.rank(method="average", pct=True)
-        ranked_y = ranked_y - ranked_y.mean()
-        ranked_x = block[feature_columns].rank(method="average", pct=True)
-        ranked_x = ranked_x - ranked_x.mean(axis=0)
-        yv = ranked_y.to_numpy(dtype="float64")
-        xv = ranked_x.to_numpy(dtype="float64")
+        # Keep the two IC contracts distinct.  Reference minute-mean IC uses
+        # average ranks directly; corrected pooled IC uses per-minute
+        # percentile ranks demeaned within each cross-section.  Percentile
+        # ranks are an affine transform only when the valid count is identical,
+        # which is not true with feature-specific missingness.
+        ranked_y_raw = y.rank(method="average")
+        label_count = int(ranked_y_raw.notna().sum())
+        ranked_y_pooled = ranked_y_raw / float(label_count)
+        ranked_y_pooled = ranked_y_pooled - ranked_y_pooled.mean()
+        ranked_x_raw = block[feature_columns].rank(method="average")
+        feature_counts = ranked_x_raw.notna().sum(axis=0).astype("float64")
+        ranked_x_pooled = ranked_x_raw.divide(feature_counts, axis="columns")
+        ranked_x_pooled = ranked_x_pooled - ranked_x_pooled.mean(axis=0)
+        yv = ranked_y_raw.to_numpy(dtype="float64")
+        yv_pooled = ranked_y_pooled.to_numpy(dtype="float64")
+        xv = ranked_x_raw.to_numpy(dtype="float64")
+        xv_pooled = ranked_x_pooled.to_numpy(dtype="float64")
         for idx, feature in enumerate(feature_columns):
             corr, count = R._corr_with_min_n(xv[:, idx], yv, min_n=min_n)
             minute_counts[feature] += int(count)
             if np.isfinite(corr):
                 minute_values[feature].append(float(corr))
-            _update_corr_state(pooled[feature], xv[:, idx], yv)
+            _update_corr_state(pooled[feature], xv_pooled[:, idx], yv_pooled)
 
     minute_out: dict[str, dict[str, float]] = {}
     pooled_out: dict[str, dict[str, float]] = {}
