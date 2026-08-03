@@ -2,7 +2,15 @@ from __future__ import annotations
 
 """Executable v2.4 entrypoint with exact feature and canonical projection."""
 
+import sys
+from pathlib import Path
 from typing import Any
+
+# File-path execution is used by detached workers; make the repository package
+# importable without relying on an editable install or inherited PYTHONPATH.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from nff_research import v2_4_optimized_runner as fast
 
