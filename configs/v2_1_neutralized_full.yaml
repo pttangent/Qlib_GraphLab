@@ -1,5 +1,8 @@
+research_version: "2.2"
+base_runner_version: "2.1"
+
 run:
-  name: v2_1_neutralized_full_20260803_v2_2_incremental_vwap_gate
+  name: v2_2_oof_incremental_full_20260803_vwap_gate
   script: nff_research/v2_1_neutralized_runner.py
   start_date: "2026-01-02"
   end_date: "2026-07-22"
@@ -81,6 +84,7 @@ portfolio_proxy:
     - contrarian_q10_15m
     - contrarian_q05_30m
     - contrarian_q05_60m
+    - contrarian_q05_30m_hawkes_pair_ungated
     - contrarian_q05_30m_hawkes_liquidity_gate
   primary_execution_label: return_vwap_to_vwap
   note: "Proxy only; not a full Qlib Recorder/model backtest. Horizon H uses ceil(H/rebalance_minutes) sleeves and compares turnover only within the same sleeve."
@@ -88,3 +92,11 @@ portfolio_proxy:
 session:
   timezone: America/New_York
   regular_session: "09:30 <= local_time < 16:00"
+
+incremental_validation:
+  method: fixed_symbol_fold_cross_sectional_oof_ridge
+  folds: 5
+  fold_algorithm: sha256_normalized_symbol_first8_big_endian_modulo
+  ridge_alpha: 0.001
+  min_train_n: 40
+  sample_policy: largest_step_common_complete_case_all_steps_or_drop_minute

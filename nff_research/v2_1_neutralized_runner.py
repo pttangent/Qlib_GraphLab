@@ -102,6 +102,14 @@ BUNDLE_MODEL_LABELS = {
     "liquidity_deterioration",
 }
 
+RESEARCH_VERSION = "2.2"
+BASE_RUNNER_VERSION = "2.1"
+OOF_FOLDS = 5
+OOF_RIDGE_ALPHA = 0.001
+OOF_MIN_TRAIN_N = 40
+OOF_FOLD_ALGORITHM = "sha256_normalized_symbol_first8_big_endian_modulo"
+OOF_SAMPLE_POLICY = "largest_step_common_complete_case_all_steps_or_drop_minute"
+
 REPRESENTATIVE_ALPHA_FEATURES = [
     "traditional__momentum_15m",
     "traditional__momentum_30m",
@@ -280,6 +288,7 @@ def apply_config_args(args: argparse.Namespace, config: dict[str, Any], explicit
     run = config.get("run", {}) if isinstance(config.get("run", {}), dict) else {}
     paths = config.get("local_paths", {}) if isinstance(config.get("local_paths", {}), dict) else {}
     portfolio = config.get("portfolio_proxy", {}) if isinstance(config.get("portfolio_proxy", {}), dict) else {}
+    incremental = config.get("incremental_validation", {}) if isinstance(config.get("incremental_validation", {}), dict) else {}
     mappings = {
         "name": ("run_id", "--run-id"),
         "start_date": ("start_date", "--start-date"),
@@ -306,9 +315,17 @@ def apply_config_args(args: argparse.Namespace, config: dict[str, Any], explicit
         args.rebalance_minutes = int(portfolio["rebalance_minutes"])
     if "cost_bps_per_turnover" in portfolio and "--cost-bps-per-turnover" not in explicit_flags:
         args.cost_bps_per_turnover = float(portfolio["cost_bps_per_turnover"])
+    if "folds" in incremental and "--oof-folds" not in explicit_flags:
+        args.oof_folds = int(incremental["folds"])
+    if "ridge_alpha" in incremental and "--oof-ridge-alpha" not in explicit_flags:
+        args.oof_ridge_alpha = float(incremental["ridge_alpha"])
+    if "min_train_n" in incremental and "--oof-min-train-n" not in explicit_flags:
+        args.oof_min_train_n = int(incremental["min_train_n"])
     if not args.run_id:
         args.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     return {
+        "research_version": str(config.get("research_version", RESEARCH_VERSION)),
+        "base_runner_version": str(config.get("base_runner_version", BASE_RUNNER_VERSION)),
         "run_id": args.run_id,
         "start_date": args.start_date,
         "end_date": args.end_date,
@@ -326,6 +343,19 @@ def apply_config_args(args: argparse.Namespace, config: dict[str, Any], explicit
         "rebalance_minutes": args.rebalance_minutes,
         "cost_bps_per_turnover": args.cost_bps_per_turnover,
         "allow_mixed_contracts": bool(args.allow_mixed_contracts),
+        "incremental_validation": {
+            "method": "fixed_symbol_fold_cross_sectional_oof_ridge",
+            "folds": args.oof_folds,
+            "fold_algorithm": OOF_FOLD_ALGORITHM,
+            "ridge_alpha": args.oof_ridge_alpha,
+            "min_train_n": args.oof_min_train_n,
+            "sample_policy": OOF_SAMPLE_POLICY,
+        },
+        "portfolio_policy": {
+            "primary_execution_label": "return_vwap_to_vwap",
+            "applicability": {"15": [15], "30": [15, 30], "60": [30, 60], "120": [60]},
+            "accounting": "same_sleeve_turnover",
+        },
         "paths": {
             "warehouse_root": str(WAREHOUSE_ROOT),
             "research_root": str(RESEARCH_ROOT),
@@ -356,7 +386,7 @@ def build_run_contract(out_root: Path, controls_path: Path, effective_config: di
     runner_path = Path(__file__).resolve()
     dependency_path = Path(V2.__file__).resolve() if getattr(V2, "__file__", None) else None
     contract = {
-        "contract_version": "v2_1_20260803_dst_contract_v1",
+        "contract_version": "v2_2_20260803_oof_contract_v1",
         "created_utc": utc_now(),
         "git_commit": current_git_commit(),
         "runner_path": str(runner_path),
@@ -371,6 +401,10 @@ def build_run_contract(out_root: Path, controls_path: Path, effective_config: di
         "warehouse_root": str(WAREHOUSE_ROOT),
         "session": effective_config["session"],
         "portfolio_accounting": "same_sleeve_turnover",
+        "research_version": effective_config["research_version"],
+        "base_runner_version": effective_config["base_runner_version"],
+        "incremental_validation": effective_config["incremental_validation"],
+        "portfolio_policy": effective_config["portfolio_policy"],
         "effective_config": effective_config,
     }
     contract_hash = json_sha256({k: v for k, v in contract.items() if k != "created_utc"})
@@ -1224,6 +1258,73 @@ def decile_curves(
     )
 
 
+def stable_symbol_fold(symbol: Any, folds: int = OOF_FOLDS) -> int:
+    if folds < 2:
+        raise ValueError("folds must be at least 2")
+    normalized = str(symbol).strip().upper()
+    digest = hashlib.sha256(normalized.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=False) % folds
+
+
+def _ridge_fit(x: np.ndarray, y: np.ndarray, alpha: float) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+    mean = x.mean(axis=0)
+    std = x.std(axis=0)
+    std[std <= 1e-12] = 1.0
+    scaled = (x - mean) / std
+    design = np.column_stack([np.ones(scaled.shape[0]), scaled])
+    penalty = np.eye(design.shape[1], dtype="float64") * alpha
+    penalty[0, 0] = 0.0
+    try:
+        coef = np.linalg.solve(design.T @ design + penalty, design.T @ y)
+    except np.linalg.LinAlgError:
+        return None
+    return mean, std, coef
+
+
+def _ridge_predict(x: np.ndarray, fitted: tuple[np.ndarray, np.ndarray, np.ndarray]) -> np.ndarray:
+    mean, std, coef = fitted
+    scaled = (x - mean) / std
+    return np.column_stack([np.ones(scaled.shape[0]), scaled]) @ coef
+
+
+def _fixed_symbol_fold_oof_predict(
+    x: pd.DataFrame,
+    y: pd.Series,
+    symbols: np.ndarray,
+    *,
+    folds: int = OOF_FOLDS,
+    alpha: float = OOF_RIDGE_ALPHA,
+    min_train_n: int = OOF_MIN_TRAIN_N,
+) -> np.ndarray | None:
+    if len(x) != len(y) or len(x) != len(symbols):
+        raise ValueError("x, y, and symbols must have equal length")
+    numeric_x = x.apply(pd.to_numeric, errors="coerce")
+    numeric_y = pd.to_numeric(y, errors="coerce")
+    if not np.isfinite(numeric_x.to_numpy(dtype="float64")).all() or not np.isfinite(numeric_y.to_numpy(dtype="float64")).all():
+        return None
+
+    ranked_x = numeric_x.rank(method="average", pct=True)
+    ranked_x = ranked_x - ranked_x.mean(axis=0)
+    x_values = ranked_x.to_numpy(dtype="float64")
+    y_values = numeric_y.to_numpy(dtype="float64")
+    fold_ids = np.fromiter((stable_symbol_fold(symbol, folds) for symbol in symbols), dtype="int64", count=len(symbols))
+    predictions = np.full(len(y_values), np.nan, dtype="float64")
+
+    for held_out in range(folds):
+        test = fold_ids == held_out
+        train = ~test
+        if not test.any() or int(train.sum()) < min_train_n:
+            return None
+        train_y = pd.Series(y_values[train]).rank(method="average", pct=True).to_numpy(dtype="float64")
+        train_y -= train_y.mean()
+        fitted = _ridge_fit(x_values[train], train_y, alpha)
+        if fitted is None:
+            return None
+        predictions[test] = _ridge_predict(x_values[test], fitted)
+
+    return predictions if np.isfinite(predictions).all() else None
+
+
 def _ridge_fit_predict(x: np.ndarray, y: np.ndarray, alpha: float = 1e-3) -> tuple[np.ndarray, int, float]:
     valid = np.isfinite(y) & np.isfinite(x).all(axis=1)
     n = int(valid.sum())
@@ -1232,22 +1333,135 @@ def _ridge_fit_predict(x: np.ndarray, y: np.ndarray, alpha: float = 1e-3) -> tup
         return pred, n, math.nan
     xv = x[valid].astype("float64")
     yv = y[valid].astype("float64")
-    mean = xv.mean(axis=0)
-    std = xv.std(axis=0)
-    std[std <= 1e-12] = 1.0
-    xs = (xv - mean) / std
-    design = np.column_stack([np.ones(xs.shape[0]), xs])
-    penalty = np.eye(design.shape[1], dtype="float64") * alpha
-    penalty[0, 0] = 0.0
-    try:
-        coef = np.linalg.solve(design.T @ design + penalty, design.T @ yv)
-    except np.linalg.LinAlgError:
+    fitted = _ridge_fit(xv, yv, alpha)
+    if fitted is None:
         return pred, n, math.nan
-    pred_valid = design @ coef
+    pred_valid = _ridge_predict(xv, fitted)
     pred[valid] = pred_valid
     denom = float(((yv - yv.mean()) ** 2).sum())
     r2 = 1.0 - float(((yv - pred_valid) ** 2).sum()) / denom if denom > 0 else math.nan
     return pred, n, r2
+
+
+def _corr_with_min_n(x: np.ndarray, y: np.ndarray, min_n: int) -> tuple[float, int]:
+    valid = np.isfinite(x) & np.isfinite(y)
+    n = int(valid.sum())
+    if n < min_n:
+        return math.nan, n
+    xv = x[valid].astype("float64")
+    yv = y[valid].astype("float64")
+    x0 = xv - xv.mean()
+    y0 = yv - yv.mean()
+    denom = math.sqrt(float((x0 * x0).sum() * (y0 * y0).sum()))
+    return (float((x0 * y0).sum() / denom), n) if denom > 0 else (math.nan, n)
+
+
+def _rank_and_demean_by_minute(values: pd.Series) -> pd.Series:
+    ranked = values.groupby(level="datetime", sort=False).rank(method="average", pct=True)
+    return ranked - ranked.groupby(level="datetime", sort=False).transform("mean")
+
+
+def _pooled_demeaned_pct_rank_corr(prediction: pd.Series, target: pd.Series, min_n: int = 30) -> tuple[float, int]:
+    aligned = pd.concat([prediction.rename("prediction"), target.rename("target")], axis=1).dropna()
+    if aligned.empty:
+        return math.nan, 0
+    pred_rank = _rank_and_demean_by_minute(aligned["prediction"])
+    target_rank = _rank_and_demean_by_minute(aligned["target"])
+    return _corr_with_min_n(pred_rank.to_numpy(dtype="float64"), target_rank.to_numpy(dtype="float64"), min_n)
+
+
+def _oof_prediction_metrics(prediction: pd.Series, target: pd.Series, min_n: int = 30) -> dict[str, Any]:
+    aligned = pd.concat([prediction.rename("prediction"), target.rename("target")], axis=1).dropna()
+    minute_ic: dict[Any, float] = {}
+    minute_r2: dict[Any, float] = {}
+    minute_mse: dict[Any, float] = {}
+    admitted: list[pd.Index] = []
+    for dt, block in aligned.groupby(level="datetime", sort=False):
+        if len(block) < min_n:
+            continue
+        pred_rank = block["prediction"].rank(method="average", pct=True)
+        pred_rank -= pred_rank.mean()
+        target_rank = block["target"].rank(method="average", pct=True)
+        target_rank -= target_rank.mean()
+        corr, n = _corr_with_min_n(pred_rank.to_numpy(dtype="float64"), target_rank.to_numpy(dtype="float64"), min_n)
+        if n < min_n or not np.isfinite(corr):
+            continue
+        raw_prediction = block["prediction"].to_numpy(dtype="float64")
+        ranked_target = target_rank.to_numpy(dtype="float64")
+        residual = ranked_target - raw_prediction
+        denom = float(((ranked_target - ranked_target.mean()) ** 2).sum())
+        minute_ic[dt] = float(corr)
+        minute_mse[dt] = float(np.mean(residual**2))
+        minute_r2[dt] = 1.0 - float((residual**2).sum()) / denom if denom > 0 else math.nan
+        admitted.append(block.index)
+
+    if not admitted:
+        return {
+            "mean_minute_pred_rank_ic": math.nan,
+            "pooled_demeaned_pct_rank_pred_ic": math.nan,
+            "mean_minute_r2": math.nan,
+            "mean_minute_mse": math.nan,
+            "sampled_minutes": 0,
+            "sample_count": 0,
+            "_minute_rank_ic": pd.Series(dtype="float64"),
+            "_minute_r2": pd.Series(dtype="float64"),
+            "_minute_mse": pd.Series(dtype="float64"),
+        }
+    admitted_index = admitted[0]
+    for index in admitted[1:]:
+        admitted_index = admitted_index.append(index)
+    pooled, _ = _pooled_demeaned_pct_rank_corr(prediction.loc[admitted_index], target.loc[admitted_index], min_n=min_n)
+    ic_series = pd.Series(minute_ic, dtype="float64")
+    r2_series = pd.Series(minute_r2, dtype="float64")
+    mse_series = pd.Series(minute_mse, dtype="float64")
+    return {
+        "mean_minute_pred_rank_ic": float(ic_series.mean()),
+        "pooled_demeaned_pct_rank_pred_ic": float(pooled),
+        "mean_minute_r2": float(r2_series.mean()),
+        "mean_minute_mse": float(mse_series.mean()),
+        "sampled_minutes": int(len(ic_series)),
+        "sample_count": int(len(admitted_index)),
+        "_minute_rank_ic": ic_series,
+        "_minute_r2": r2_series,
+        "_minute_mse": mse_series,
+    }
+
+
+def _oof_metric_deltas(
+    current: dict[str, Any],
+    previous: dict[str, Any],
+    incremental_prediction: pd.Series,
+    target: pd.Series,
+    min_n: int = 30,
+) -> dict[str, float]:
+    minute_ic = current["_minute_rank_ic"].subtract(previous["_minute_rank_ic"], fill_value=np.nan).dropna()
+    minute_r2 = current["_minute_r2"].subtract(previous["_minute_r2"], fill_value=np.nan).dropna()
+    mse_improvement = previous["_minute_mse"].subtract(current["_minute_mse"], fill_value=np.nan).dropna()
+    incremental_ic, _ = _pooled_demeaned_pct_rank_corr(incremental_prediction, target, min_n=min_n)
+    return {
+        "delta_mean_minute_pred_rank_ic": float(minute_ic.mean()) if not minute_ic.empty else math.nan,
+        "delta_pooled_pred_rank_ic": float(
+            current["pooled_demeaned_pct_rank_pred_ic"] - previous["pooled_demeaned_pct_rank_pred_ic"]
+        ),
+        "delta_mean_minute_r2": float(minute_r2.mean()) if not minute_r2.empty else math.nan,
+        "mse_improvement_vs_previous": float(mse_improvement.mean()) if not mse_improvement.empty else math.nan,
+        "incremental_oof_prediction_rank_ic": float(incremental_ic),
+    }
+
+
+def _index_identity_hash(index: pd.MultiIndex) -> str:
+    digest = hashlib.sha256()
+    for dt, symbol in index:
+        digest.update(f"{pd.Timestamp(dt).isoformat()}|{str(symbol).strip().upper()}\n".encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _fold_identity_hash(index: pd.MultiIndex, folds: int) -> str:
+    digest = hashlib.sha256()
+    for _, symbol in index:
+        normalized = str(symbol).strip().upper()
+        digest.update(f"{normalized}|{stable_symbol_fold(normalized, folds)}\n".encode("utf-8"))
+    return digest.hexdigest()
 
 
 def bundle_incremental_model_screen(
@@ -1257,12 +1471,21 @@ def bundle_incremental_model_screen(
     controls: pd.DataFrame,
     trade_date: str,
     min_n: int,
+    *,
+    oof_folds: int = OOF_FOLDS,
+    oof_ridge_alpha: float = OOF_RIDGE_ALPHA,
+    oof_min_train_n: int = OOF_MIN_TRAIN_N,
 ) -> pd.DataFrame:
     feature_columns = analysis_features(features)
     bundle_columns = {
         step: [column for column in feature_columns if infer_bundle(column) in bundles]
         for step, bundles in BUNDLE_MODEL_STEPS
     }
+    active_steps = [(step, bundle_columns[step]) for step, _ in BUNDLE_MODEL_STEPS if bundle_columns[step]]
+    needed = sorted({column for _, columns in active_steps for column in columns})
+    if not active_steps or not needed:
+        return pd.DataFrame()
+
     masks = universe_masks(features, controls)
     universe = "liquid_common_adv20_top1000"
     universe_mask = masks[universe]
@@ -1275,51 +1498,58 @@ def bundle_incremental_model_screen(
         base_mask = (universe_mask & labels[label_column].notna() & label_masks[label_column].fillna(False)).fillna(False)
         if int(base_mask.sum()) < min_n:
             continue
-        needed = sorted({column for columns in bundle_columns.values() for column in columns})
-        if not needed:
-            continue
         work = pd.concat([features.loc[base_mask, needed], labels.loc[base_mask, label_column].rename("label")], axis=1)
         minutes = work.index.get_level_values("datetime").minute
         work = work.loc[(minutes % 15) == 0]
-        if work.empty:
-            continue
-        previous_pred: pd.Series | None = None
-        previous_step: str | None = None
-        for step, _ in BUNDLE_MODEL_STEPS:
-            columns = bundle_columns[step]
-            if not columns:
+        prediction_parts: dict[str, list[pd.Series]] = {step: [] for step, _ in active_steps}
+        target_parts: list[pd.Series] = []
+
+        for _, raw_block in work.groupby(level="datetime", sort=False):
+            block = raw_block.dropna(subset=needed + ["label"])
+            if len(block) < min_n:
                 continue
-            pred = pd.Series(np.nan, index=work.index, dtype="float64")
-            total_n = 0
-            r2_values: list[float] = []
-            minute_corrs: list[float] = []
-            for _, block in work[columns + ["label"]].groupby(level="datetime", sort=False):
-                if len(block) < min_n:
-                    continue
-                ranked_x = block[columns].rank(method="average", pct=True)
-                ranked_x = ranked_x - ranked_x.mean(axis=0)
-                ranked_y = block["label"].rank(method="average", pct=True)
-                ranked_y = ranked_y - ranked_y.mean()
-                pred_arr, n, r2 = _ridge_fit_predict(ranked_x.to_numpy(dtype="float64"), ranked_y.to_numpy(dtype="float64"))
-                total_n += n
-                if np.isfinite(r2):
-                    r2_values.append(float(r2))
-                pred.loc[block.index] = pred_arr
-                corr, corr_n = _corr(pred_arr, ranked_y.to_numpy(dtype="float64"))
-                if corr_n >= min_n and np.isfinite(corr):
-                    minute_corrs.append(float(corr))
-            valid = pred.notna() & work["label"].notna()
-            pooled_corr, pooled_n = _corr(
-                pred.loc[valid].to_numpy(dtype="float64"),
-                work.loc[valid, "label"].groupby(level="datetime", sort=False).rank(method="average", pct=True).to_numpy(dtype="float64"),
-            )
-            delta_pred_corr = math.nan
-            if previous_pred is not None:
-                aligned = valid & previous_pred.notna()
-                if int(aligned.sum()) >= min_n:
-                    delta = pred.loc[aligned] - previous_pred.loc[aligned]
-                    target = work.loc[aligned, "label"].groupby(level="datetime", sort=False).rank(method="average", pct=True)
-                    delta_pred_corr, _ = _corr(delta.to_numpy(dtype="float64"), target.to_numpy(dtype="float64"))
+            symbols = block.index.get_level_values(-1).astype(str).to_numpy()
+            step_predictions: dict[str, pd.Series] = {}
+            failed = False
+            for step, columns in active_steps:
+                pred = _fixed_symbol_fold_oof_predict(
+                    block[columns],
+                    block["label"],
+                    symbols,
+                    folds=oof_folds,
+                    alpha=oof_ridge_alpha,
+                    min_train_n=oof_min_train_n,
+                )
+                if pred is None or not np.isfinite(pred).all():
+                    failed = True
+                    break
+                step_predictions[step] = pd.Series(pred, index=block.index, dtype="float64")
+            if failed or len(step_predictions) != len(active_steps):
+                continue
+            target_parts.append(block["label"].astype("float64"))
+            for step, _ in active_steps:
+                prediction_parts[step].append(step_predictions[step])
+
+        if not target_parts:
+            continue
+        target = pd.concat(target_parts)
+        sample_hash = _index_identity_hash(target.index)
+        fold_hash = _fold_identity_hash(target.index, oof_folds)
+        previous_step: str | None = None
+        previous_prediction: pd.Series | None = None
+        previous_metrics: dict[str, Any] | None = None
+        for step, columns in active_steps:
+            prediction = pd.concat(prediction_parts[step])
+            metrics = _oof_prediction_metrics(prediction, target, min_n=min_n)
+            deltas = {
+                "delta_mean_minute_pred_rank_ic": math.nan,
+                "delta_pooled_pred_rank_ic": math.nan,
+                "delta_mean_minute_r2": math.nan,
+                "mse_improvement_vs_previous": math.nan,
+                "incremental_oof_prediction_rank_ic": math.nan,
+            }
+            if previous_prediction is not None and previous_metrics is not None:
+                deltas = _oof_metric_deltas(metrics, previous_metrics, prediction - previous_prediction, target, min_n=min_n)
             rows.append(
                 {
                     "trade_date": trade_date,
@@ -1329,17 +1559,23 @@ def bundle_incremental_model_screen(
                     "step": step,
                     "previous_step": previous_step,
                     "feature_count": len(columns),
-                    "sampled_minutes": int(len(minute_corrs)),
-                    "sample_count": int(total_n),
-                    "mean_minute_pred_rank_ic": float(np.mean(minute_corrs)) if minute_corrs else math.nan,
-                    "pooled_pred_rank_ic": float(pooled_corr) if np.isfinite(pooled_corr) else math.nan,
-                    "mean_minute_r2": float(np.mean(r2_values)) if r2_values else math.nan,
-                    "delta_pred_rank_ic_vs_previous": delta_pred_corr,
-                    "contract": "same-day 15m sampled cross-sectional ridge rank-model screen; descriptive incremental validation, not OOS backtest",
+                    "common_feature_count": len(needed),
+                    "fold_count": oof_folds,
+                    "sampled_minutes": metrics["sampled_minutes"],
+                    "sample_count": metrics["sample_count"],
+                    "sample_identity_hash": sample_hash,
+                    "fold_identity_hash": fold_hash,
+                    "mean_minute_pred_rank_ic": metrics["mean_minute_pred_rank_ic"],
+                    "pooled_demeaned_pct_rank_pred_ic": metrics["pooled_demeaned_pct_rank_pred_ic"],
+                    "mean_minute_r2": metrics["mean_minute_r2"],
+                    "mean_minute_mse": metrics["mean_minute_mse"],
+                    **deltas,
+                    "contract": "same-day 15m fixed-symbol-fold cross-sectional OOF ridge screen on an all-step common sample; not temporal OOS",
                 }
             )
-            previous_pred = pred
             previous_step = step
+            previous_prediction = prediction
+            previous_metrics = metrics
     return pd.DataFrame(rows)
 
 
@@ -1360,7 +1596,67 @@ def _portfolio_weights(block: pd.DataFrame, signal_column: str, quantile: float 
     return weights[weights != 0.0]
 
 
+def _same_sleeve_turnover(current: pd.Series, previous: pd.Series | None) -> float:
+    if previous is None:
+        return float(current.abs().sum())
+    combined = current.reindex(current.index.union(previous.index), fill_value=0.0)
+    prior = previous.reindex(combined.index, fill_value=0.0)
+    return float((combined - prior).abs().sum())
+
+
+def _portfolio_variant_applicability(horizon: int, rebalance_minutes: int) -> str:
+    primary = {
+        15: {15},
+        30: {15, 30},
+        60: {30, 60},
+        120: {60},
+    }
+    return "primary" if rebalance_minutes in primary.get(horizon, set()) else "diagnostic"
+
+
+def _hawkes_gate_pair(
+    block: pd.DataFrame,
+    gate_column: str,
+    adv20_column: str,
+    *,
+    exclude_fraction: float = 0.20,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float | int]]:
+    if not 0.0 <= exclude_fraction < 1.0:
+        raise ValueError("exclude_fraction must be in [0, 1)")
+    required = [gate_column, adv20_column]
+    pre_gate = block.replace([np.inf, -np.inf], np.nan).dropna(subset=required).copy()
+    adv20 = pd.to_numeric(pre_gate[adv20_column], errors="coerce")
+    pre_gate = pre_gate.loc[adv20.notna() & (adv20 >= 0)]
+    adv20 = pd.to_numeric(pre_gate[adv20_column], errors="coerce")
+    remove_n = min(len(pre_gate), int(math.ceil(exclude_fraction * len(pre_gate))))
+    symbols = pre_gate.index.get_level_values(-1).astype(str).str.strip().str.upper()
+    order = pd.DataFrame(
+        {
+            "gate": pd.to_numeric(pre_gate[gate_column], errors="coerce").to_numpy(dtype="float64"),
+            "symbol": symbols.to_numpy(),
+            "position": np.arange(len(pre_gate), dtype="int64"),
+        }
+    ).sort_values(["gate", "symbol"], ascending=[False, True], kind="mergesort")
+    removed_positions = set(order.head(remove_n)["position"].astype(int).tolist())
+    keep = np.array([position not in removed_positions for position in range(len(pre_gate))], dtype=bool)
+    eligible = pre_gate.iloc[keep]
+    pre_adv = float(adv20.sum())
+    eligible_adv = float(pd.to_numeric(eligible[adv20_column], errors="coerce").sum())
+    return pre_gate, eligible, {
+        "pre_gate_count": int(len(pre_gate)),
+        "eligible_count": int(len(eligible)),
+        "gate_kept_ratio": float(len(eligible) / len(pre_gate)) if len(pre_gate) else math.nan,
+        "pre_gate_adv20_sum": pre_adv,
+        "eligible_adv20_sum": eligible_adv,
+        "eligible_adv20_kept_ratio": float(eligible_adv / pre_adv) if pre_adv > 0 else math.nan,
+    }
+
+
 def _is_rebalance_minute(dt: Any, rebalance_minutes: int) -> bool:
+    return _rebalance_ordinal(dt, rebalance_minutes) is not None
+
+
+def _rebalance_ordinal(dt: Any, rebalance_minutes: int) -> int | None:
     stamp = pd.Timestamp(dt)
     if stamp.tzinfo is None:
         stamp = stamp.tz_localize("UTC")
@@ -1370,7 +1666,9 @@ def _is_rebalance_minute(dt: Any, rebalance_minutes: int) -> bool:
     minute = local.hour * 60 + local.minute
     open_minute = SESSION_OPEN[0] * 60 + SESSION_OPEN[1]
     close_minute = SESSION_CLOSE[0] * 60 + SESSION_CLOSE[1]
-    return open_minute <= minute < close_minute and (minute - open_minute) % rebalance_minutes == 0
+    if not open_minute <= minute < close_minute or (minute - open_minute) % rebalance_minutes != 0:
+        return None
+    return (minute - open_minute) // rebalance_minutes
 
 
 def staggered_portfolio_proxy(
@@ -1391,11 +1689,26 @@ def staggered_portfolio_proxy(
     if not portfolio_features:
         return pd.DataFrame()
     variants = [
-        {"name": "long_high_q10_15m", "direction": 1.0, "quantile": 0.10, "rebalance_minutes": 15, "hawkes_gate": False},
-        {"name": "contrarian_q10_15m", "direction": -1.0, "quantile": 0.10, "rebalance_minutes": 15, "hawkes_gate": False},
-        {"name": "contrarian_q05_30m", "direction": -1.0, "quantile": 0.05, "rebalance_minutes": 30, "hawkes_gate": False},
-        {"name": "contrarian_q05_60m", "direction": -1.0, "quantile": 0.05, "rebalance_minutes": 60, "hawkes_gate": False},
-        {"name": "contrarian_q05_30m_hawkes_liquidity_gate", "direction": -1.0, "quantile": 0.05, "rebalance_minutes": 30, "hawkes_gate": True},
+        {"name": "long_high_q10_15m", "direction": 1.0, "quantile": 0.10, "rebalance_minutes": 15, "gate_pair_id": None, "gate_mode": "none"},
+        {"name": "contrarian_q10_15m", "direction": -1.0, "quantile": 0.10, "rebalance_minutes": 15, "gate_pair_id": None, "gate_mode": "none"},
+        {"name": "contrarian_q05_30m", "direction": -1.0, "quantile": 0.05, "rebalance_minutes": 30, "gate_pair_id": None, "gate_mode": "none"},
+        {"name": "contrarian_q05_60m", "direction": -1.0, "quantile": 0.05, "rebalance_minutes": 60, "gate_pair_id": None, "gate_mode": "none"},
+        {
+            "name": "contrarian_q05_30m_hawkes_pair_ungated",
+            "direction": -1.0,
+            "quantile": 0.05,
+            "rebalance_minutes": 30,
+            "gate_pair_id": "hawkes_total_intensity_top20_q05_30m",
+            "gate_mode": "ungated_shared_sample",
+        },
+        {
+            "name": "contrarian_q05_30m_hawkes_liquidity_gate",
+            "direction": -1.0,
+            "quantile": 0.05,
+            "rebalance_minutes": 30,
+            "gate_pair_id": "hawkes_total_intensity_top20_q05_30m",
+            "gate_mode": "exclude_top20",
+        },
     ]
     label_candidates = [
         c
@@ -1410,8 +1723,13 @@ def staggered_portfolio_proxy(
         if int(base_mask.sum()) < min_n:
             continue
         extra_columns = [hawkes_gate_column] if hawkes_gate_column in features.columns else []
+        adv20 = np.expm1(pd.to_numeric(controls.loc[base_mask, "control__log_adv20"], errors="coerce")).rename("__adv20")
         work = pd.concat(
-            [features.loc[base_mask, portfolio_features + extra_columns], labels.loc[base_mask, label_column].rename("label")],
+            [
+                features.loc[base_mask, portfolio_features + extra_columns],
+                labels.loc[base_mask, label_column].rename("label"),
+                adv20,
+            ],
             axis=1,
         )
         for variant in variants:
@@ -1419,21 +1737,42 @@ def staggered_portfolio_proxy(
             sleeve_count = max(1, int(math.ceil(horizon / variant_rebalance)))
             for feature in portfolio_features:
                 prev_by_sleeve: dict[int, pd.Series] = {}
-                rebalance_ordinal = 0
-                columns = [feature, "label"]
-                if variant["hawkes_gate"] and hawkes_gate_column in work.columns:
+                columns = [feature, "label", "__adv20"]
+                if variant["gate_pair_id"] is not None and hawkes_gate_column in work.columns:
                     columns.append(hawkes_gate_column)
-                for dt, block in work[columns].dropna(subset=[feature, "label"]).groupby(level="datetime", sort=True):
-                    if not _is_rebalance_minute(dt, variant_rebalance) or len(block) < min_n:
+                for dt, block in work[columns].dropna(subset=[feature, "label", "__adv20"]).groupby(level="datetime", sort=True):
+                    rebalance_ordinal = _rebalance_ordinal(dt, variant_rebalance)
+                    if rebalance_ordinal is None or len(block) < min_n:
                         continue
-                    if variant["hawkes_gate"] and hawkes_gate_column in block.columns:
-                        gate_rank = block[hawkes_gate_column].rank(method="average", pct=True)
-                        block = block.loc[gate_rank <= 0.80]
-                        if len(block) < min_n:
-                            continue
                     sleeve_id = rebalance_ordinal % sleeve_count
-                    rebalance_ordinal += 1
                     block = block.assign(__signal=block[feature].astype(float) * float(variant["direction"]))
+                    if variant["gate_pair_id"] is not None:
+                        if hawkes_gate_column not in block.columns:
+                            continue
+                        pre_gate, gated, gate_stats = _hawkes_gate_pair(block, hawkes_gate_column, "__adv20")
+                        if variant["gate_mode"] == "exclude_top20":
+                            block = gated
+                        else:
+                            block = pre_gate
+                            gate_stats = {
+                                **gate_stats,
+                                "eligible_count": int(len(pre_gate)),
+                                "gate_kept_ratio": 1.0,
+                                "eligible_adv20_sum": gate_stats["pre_gate_adv20_sum"],
+                                "eligible_adv20_kept_ratio": 1.0,
+                            }
+                    else:
+                        adv_sum = float(pd.to_numeric(block["__adv20"], errors="coerce").sum())
+                        gate_stats = {
+                            "pre_gate_count": int(len(block)),
+                            "eligible_count": int(len(block)),
+                            "gate_kept_ratio": 1.0,
+                            "pre_gate_adv20_sum": adv_sum,
+                            "eligible_adv20_sum": adv_sum,
+                            "eligible_adv20_kept_ratio": 1.0,
+                        }
+                    if len(block) < min_n:
+                        continue
                     weights = _portfolio_weights(block, "__signal", quantile=float(variant["quantile"]))
                     if weights.empty:
                         continue
@@ -1441,13 +1780,9 @@ def staggered_portfolio_proxy(
                     short_mask = weights < 0
                     gross_return = float((weights * block.loc[weights.index, "label"]).sum())
                     prev_weights = prev_by_sleeve.get(sleeve_id)
-                    if prev_weights is None:
-                        turnover = float(weights.abs().sum())
-                    else:
-                        combined = weights.reindex(weights.index.union(prev_weights.index), fill_value=0.0)
-                        previous = prev_weights.reindex(combined.index, fill_value=0.0)
-                        turnover = float((combined - previous).abs().sum())
+                    turnover = _same_sleeve_turnover(weights, prev_weights)
                     cost = turnover * cost_bps_per_turnover / 10000.0
+                    selected_adv20_sum = float(pd.to_numeric(block.loc[weights.index, "__adv20"], errors="coerce").sum())
                     rows.append(
                         {
                             "trade_date": trade_date,
@@ -1460,16 +1795,24 @@ def staggered_portfolio_proxy(
                             "portfolio_variant": variant["name"],
                             "signal_direction": "long_high" if variant["direction"] > 0 else "contrarian",
                             "quantile": float(variant["quantile"]),
-                            "hawkes_liquidity_gate": bool(variant["hawkes_gate"]),
+                            "hawkes_liquidity_gate": variant["gate_mode"] == "exclude_top20",
+                            "gate_pair_id": variant["gate_pair_id"],
+                            "gate_mode": variant["gate_mode"],
+                            "execution_role": "primary" if family == "return_vwap_to_vwap" else "diagnostic",
+                            "variant_applicability": _portfolio_variant_applicability(horizon, variant_rebalance),
                             "rebalance_minutes": variant_rebalance,
                             "sleeve_count": sleeve_count,
                             "sleeve_id": sleeve_id,
                             "portfolio_accounting": "same_sleeve_turnover",
                             "long_count": int(long_mask.sum()),
                             "short_count": int(short_mask.sum()),
+                            "selected_count": int(len(weights)),
+                            **gate_stats,
+                            "selected_adv20_sum": selected_adv20_sum,
                             "gross_return": gross_return,
                             "turnover": turnover,
                             "cost_bps_per_turnover": cost_bps_per_turnover,
+                            "cost": cost,
                             "net_return": gross_return - cost,
                         }
                     )
@@ -1492,6 +1835,9 @@ def run_date(
     allow_mixed_contracts: bool,
     rebalance_minutes: int,
     cost_bps_per_turnover: float,
+    oof_folds: int = OOF_FOLDS,
+    oof_ridge_alpha: float = OOF_RIDGE_ALPHA,
+    oof_min_train_n: int = OOF_MIN_TRAIN_N,
 ) -> dict[str, Any]:
     out_dir, summary_path, success_path = unit_paths(out_root, trade_date)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1534,7 +1880,17 @@ def run_date(
     deciles = decile_curves(features, labels, label_masks, controls, residual_cache, trade_date, min_n)
     del residual_cache
     gc.collect()
-    incremental_models = bundle_incremental_model_screen(features, labels, label_masks, controls, trade_date, min_n)
+    incremental_models = bundle_incremental_model_screen(
+        features,
+        labels,
+        label_masks,
+        controls,
+        trade_date,
+        min_n,
+        oof_folds=oof_folds,
+        oof_ridge_alpha=oof_ridge_alpha,
+        oof_min_train_n=oof_min_train_n,
+    )
     portfolio = staggered_portfolio_proxy(
         features,
         labels,
@@ -1557,8 +1913,8 @@ def run_date(
         portfolio.to_parquet(out_dir / "staggered_portfolio_proxy.parquet", index=False)
         portfolio.to_csv(out_dir / "staggered_portfolio_proxy.csv", index=False)
     if not incremental_models.empty:
-        incremental_models.to_parquet(out_dir / "bundle_incremental_model_screen.parquet", index=False)
-        incremental_models.to_csv(out_dir / "bundle_incremental_model_screen.csv", index=False)
+        incremental_models.to_parquet(out_dir / "bundle_oof_incremental_screen.parquet", index=False)
+        incremental_models.to_csv(out_dir / "bundle_oof_incremental_screen.csv", index=False)
 
     masks = universe_masks(features, controls)
     meta = {
@@ -1581,6 +1937,14 @@ def run_date(
         "decile_rows": int(len(deciles)),
         "portfolio_rows": int(len(portfolio)),
         "incremental_model_rows": int(len(incremental_models)),
+        "incremental_validation": {
+            "method": "fixed_symbol_fold_cross_sectional_oof_ridge",
+            "folds": oof_folds,
+            "fold_algorithm": OOF_FOLD_ALGORITHM,
+            "ridge_alpha": oof_ridge_alpha,
+            "min_train_n": oof_min_train_n,
+            "sample_policy": OOF_SAMPLE_POLICY,
+        },
         "portfolio_accounting": "same_sleeve_turnover",
         "label_non_null": {column: int(labels[column].notna().sum()) for column in labels.columns},
         "label_real_volume_valid": {column: int(label_masks[column].fillna(False).sum()) for column in labels.columns},
@@ -1690,8 +2054,17 @@ def _block_bootstrap_mean(values: pd.Series, reps: int = 300, block_size: int = 
 
 
 def write_research_contract(out_root: Path) -> None:
+    effective_path = out_root / "effective_config.json"
+    if effective_path.exists():
+        effective = json.loads(effective_path.read_text(encoding="utf-8"))
+    else:
+        effective = {}
+    incremental = effective.get("incremental_validation", {})
+    portfolio_policy = effective.get("portfolio_policy", {})
     contract = {
-        "name": "NFF v2.1 neutralized representative validity and same-sleeve portfolio proxy",
+        "name": "NFF v2.2 neutralized OOF incremental validity and same-sleeve portfolio proxy",
+        "research_version": str(effective.get("research_version", RESEARCH_VERSION)),
+        "base_runner_version": str(effective.get("base_runner_version", BASE_RUNNER_VERSION)),
         "rank_ic_methods": [
             "minute_mean_cs_rank_ic",
             "pooled_cs_demeaned_pct_rank_ic",
@@ -1722,21 +2095,32 @@ def write_research_contract(out_root: Path) -> None:
             "rebalance": "Every 15 NY regular-session minutes.",
             "portfolio": "Equal-weight long-short variants in liquid_common_adv20_top1000, including contrarian tails and Hawkes liquidity gate.",
             "execution_labels": ["return_open_to_open", "return_vwap_to_vwap"],
+            "primary_execution_label": portfolio_policy.get("primary_execution_label", "return_vwap_to_vwap"),
+            "applicability_policy": portfolio_policy.get(
+                "applicability", {"15": [15], "30": [15, 30], "60": [30, 60], "120": [60]}
+            ),
+            "hawkes_gate": "Stock-level eligibility gate; paired variants share finite signal/label/Hawkes/PIT-ADV20 rows before deterministic top-20% intensity exclusion.",
             "capital": "Same-sleeve accounting; for horizon H and rebalance R, ceil(H/R) sleeves are tracked and turnover compares a sleeve only with its own prior weights.",
             "cost": "net_return = gross_return - turnover * cost_bps_per_turnover / 10000.",
         },
         "incremental_model_contract": {
-            "name": "bundle_incremental_model_screen",
+            "name": "bundle_oof_incremental_screen",
             "steps": [step for step, _ in BUNDLE_MODEL_STEPS],
             "labels": sorted(BUNDLE_MODEL_LABELS),
-            "method": "same-day 15m sampled cross-sectional ridge rank-model; descriptive incremental validation, not OOS backtest",
+            "method": "same-day 15m fixed-symbol-fold cross-sectional OOF ridge; not temporal OOS",
+            "folds": int(incremental.get("folds", OOF_FOLDS)),
+            "fold_algorithm": incremental.get("fold_algorithm", OOF_FOLD_ALGORITHM),
+            "ridge_alpha": float(incremental.get("ridge_alpha", OOF_RIDGE_ALPHA)),
+            "min_train_n": int(incremental.get("min_train_n", OOF_MIN_TRAIN_N)),
+            "sample_policy": incremental.get("sample_policy", OOF_SAMPLE_POLICY),
+            "pooled_metric": "per-minute prediction and target percentile rank with demeaning before pooling",
         },
         "session_contract": {
             "timezone": str(SESSION_TZ),
             "regular_session": "09:30 <= local_time < 16:00",
         },
         "qlib_recorder_assessment": {
-            "status": "not_used_for_v2_1_validity_runner",
+            "status": "not_used_for_v2_2_validity_runner",
             "reason": "The current artifact is an intraday factor validity and sleeve-proxy research pass. Qlib Recorder can be added after predictions/positions are materialized, but custom overlapping sleeve accounting is clearer in a dedicated simulator.",
             "recommended_next_step": "Export prediction, target weight, executed sleeve weight, and realized return tables; then attach them to a Qlib Recorder or a custom recorder-compatible artifact store.",
         },
@@ -1747,7 +2131,7 @@ def write_research_contract(out_root: Path) -> None:
             "July 2026 should be read as a stress slice, not true out-of-sample.",
         ],
     }
-    atomic_write_json(out_root / "research_contract_v2_1.json", contract)
+    atomic_write_json(out_root / "research_contract_v2_2.json", contract)
 
 
 def aggregate(out_root: Path) -> None:
@@ -1946,12 +2330,23 @@ def aggregate(out_root: Path) -> None:
         overall_deciles.to_parquet(agg / "decile_curves_overall.parquet", index=False)
         overall_deciles.to_csv(agg / "decile_curves_overall.csv", index=False)
 
-    model_frames = [pd.read_parquet(path) for path in sorted(base.glob("date=*/bundle_incremental_model_screen.parquet"))]
+    model_frames = [pd.read_parquet(path) for path in sorted(base.glob("date=*/bundle_oof_incremental_screen.parquet"))]
     if model_frames:
         models = pd.concat(model_frames, ignore_index=True)
-        models.to_parquet(agg / "bundle_incremental_model_screen_by_date.parquet", index=False)
-        models.to_csv(agg / "bundle_incremental_model_screen_by_date.csv", index=False)
+        models.to_parquet(agg / "bundle_oof_incremental_screen_by_date.parquet", index=False)
+        models.to_csv(agg / "bundle_oof_incremental_screen_by_date.csv", index=False)
         model_group_cols = ["universe", "label_family", "horizon_bars", "step", "previous_step"]
+        model_metrics = [
+            "mean_minute_pred_rank_ic",
+            "pooled_demeaned_pct_rank_pred_ic",
+            "mean_minute_r2",
+            "mean_minute_mse",
+            "delta_mean_minute_pred_rank_ic",
+            "delta_pooled_pred_rank_ic",
+            "delta_mean_minute_r2",
+            "mse_improvement_vs_previous",
+            "incremental_oof_prediction_rank_ic",
+        ]
         model_overall = (
             models.groupby(model_group_cols, dropna=False)
             .agg(
@@ -1960,20 +2355,31 @@ def aggregate(out_root: Path) -> None:
                 mean_sample_count=("sample_count", "mean"),
                 mean_minute_pred_rank_ic=("mean_minute_pred_rank_ic", "mean"),
                 median_minute_pred_rank_ic=("mean_minute_pred_rank_ic", "median"),
-                mean_pooled_pred_rank_ic=("pooled_pred_rank_ic", "mean"),
+                mean_pooled_demeaned_pct_rank_pred_ic=("pooled_demeaned_pct_rank_pred_ic", "mean"),
                 mean_minute_r2=("mean_minute_r2", "mean"),
-                mean_delta_pred_rank_ic_vs_previous=("delta_pred_rank_ic_vs_previous", "mean"),
+                mean_minute_mse=("mean_minute_mse", "mean"),
+                mean_delta_minute_pred_rank_ic=("delta_mean_minute_pred_rank_ic", "mean"),
+                mean_delta_pooled_pred_rank_ic=("delta_pooled_pred_rank_ic", "mean"),
+                mean_delta_minute_r2=("delta_mean_minute_r2", "mean"),
+                mean_mse_improvement=("mse_improvement_vs_previous", "mean"),
+                mean_incremental_oof_prediction_rank_ic=("incremental_oof_prediction_rank_ic", "mean"),
             )
             .reset_index()
         )
-        hac_model_rows = []
+        hac_model_rows: list[dict[str, Any]] = []
         for keys, group in models.groupby(model_group_cols, dropna=False, sort=False):
-            t_value, p_value, n = _hac_tstat(group.sort_values("trade_date")["mean_minute_pred_rank_ic"])
-            hac_model_rows.append((*keys, t_value, p_value, n))
-        hac_models = pd.DataFrame(hac_model_rows, columns=model_group_cols + ["hac_tstat_lag5", "hac_pvalue", "hac_n"])
+            record = dict(zip(model_group_cols, keys))
+            ordered = group.sort_values("trade_date")
+            for metric in model_metrics:
+                t_value, p_value, n = _hac_tstat(ordered[metric])
+                record[f"hac_tstat_{metric}"] = t_value
+                record[f"hac_pvalue_{metric}"] = p_value
+                record[f"hac_n_{metric}"] = n
+            hac_model_rows.append(record)
+        hac_models = pd.DataFrame(hac_model_rows)
         model_overall = model_overall.merge(hac_models, on=model_group_cols, how="left")
-        model_overall.to_parquet(agg / "bundle_incremental_model_screen_overall.parquet", index=False)
-        model_overall.to_csv(agg / "bundle_incremental_model_screen_overall.csv", index=False)
+        model_overall.to_parquet(agg / "bundle_oof_incremental_screen_overall.parquet", index=False)
+        model_overall.to_csv(agg / "bundle_oof_incremental_screen_overall.csv", index=False)
 
     portfolio_frames = [pd.read_parquet(path) for path in sorted(base.glob("date=*/staggered_portfolio_proxy.parquet"))]
     if portfolio_frames:
@@ -1989,6 +2395,10 @@ def aggregate(out_root: Path) -> None:
             "signal_direction",
             "quantile",
             "hawkes_liquidity_gate",
+            "gate_pair_id",
+            "gate_mode",
+            "execution_role",
+            "variant_applicability",
             "rebalance_minutes",
         ]
         portfolio_daily = (
@@ -1998,8 +2408,11 @@ def aggregate(out_root: Path) -> None:
                 gross_return_mean=("gross_return", "mean"),
                 net_return_mean=("net_return", "mean"),
                 turnover_mean=("turnover", "mean"),
+                cost_mean=("cost", "mean"),
                 long_count_mean=("long_count", "mean"),
                 short_count_mean=("short_count", "mean"),
+                selected_count_mean=("selected_count", "mean"),
+                selected_adv20_sum_mean=("selected_adv20_sum", "mean"),
             )
             .reset_index()
         )
@@ -2012,6 +2425,9 @@ def aggregate(out_root: Path) -> None:
                 gross_return_mean=("gross_return_mean", "mean"),
                 net_return_mean=("net_return_mean", "mean"),
                 turnover_mean=("turnover_mean", "mean"),
+                cost_mean=("cost_mean", "mean"),
+                selected_count_mean=("selected_count_mean", "mean"),
+                selected_adv20_sum_mean=("selected_adv20_sum_mean", "mean"),
                 positive_net_day_ratio=("net_return_mean", lambda s: float((s > 0).mean())),
             )
             .reset_index()
@@ -2020,33 +2436,112 @@ def aggregate(out_root: Path) -> None:
         portfolio_overall.to_parquet(agg / "staggered_portfolio_proxy_overall.parquet", index=False)
         portfolio_overall.to_csv(agg / "staggered_portfolio_proxy_overall.csv", index=False)
 
+        primary_vwap = portfolio_overall.loc[
+            (portfolio_overall["execution_role"] == "primary")
+            & (portfolio_overall["label_family"] == "return_vwap_to_vwap")
+        ]
+        diagnostic_open = portfolio_overall.loc[
+            (portfolio_overall["execution_role"] == "diagnostic")
+            & (portfolio_overall["label_family"] == "return_open_to_open")
+        ]
+        primary_vwap.to_parquet(agg / "staggered_portfolio_proxy_primary_vwap_overall.parquet", index=False)
+        primary_vwap.to_csv(agg / "staggered_portfolio_proxy_primary_vwap_overall.csv", index=False)
+        diagnostic_open.to_parquet(agg / "staggered_portfolio_proxy_diagnostic_open_overall.parquet", index=False)
+        diagnostic_open.to_csv(agg / "staggered_portfolio_proxy_diagnostic_open_overall.csv", index=False)
+
+        paired = portfolio.loc[portfolio["gate_pair_id"].notna()].copy()
+        if not paired.empty:
+            pair_keys = [
+                "trade_date",
+                "datetime",
+                "sleeve_id",
+                "universe",
+                "feature",
+                "bundle",
+                "label_family",
+                "horizon_bars",
+                "gate_pair_id",
+                "execution_role",
+                "variant_applicability",
+                "signal_direction",
+                "quantile",
+                "rebalance_minutes",
+            ]
+            pair_metrics = {
+                "gross_return": "delta_gross_return",
+                "turnover": "delta_turnover",
+                "cost": "delta_cost",
+                "net_return": "delta_net_return",
+                "selected_count": "delta_selected_count",
+                "selected_adv20_sum": "delta_selected_adv20_sum",
+            }
+            ungated = paired.loc[paired["gate_mode"] == "ungated_shared_sample", pair_keys + list(pair_metrics)].copy()
+            gated = paired.loc[paired["gate_mode"] == "exclude_top20", pair_keys + list(pair_metrics)].copy()
+            ungated = ungated.rename(columns={metric: f"{metric}__ungated" for metric in pair_metrics})
+            gated = gated.rename(columns={metric: f"{metric}__gated" for metric in pair_metrics})
+            flat = gated.merge(ungated, on=pair_keys, how="inner", validate="one_to_one")
+            for metric, delta_name in pair_metrics.items():
+                flat[delta_name] = flat[f"{metric}__gated"] - flat[f"{metric}__ungated"]
+            flat = flat[pair_keys + list(pair_metrics.values())]
+            flat.to_parquet(agg / "hawkes_gate_pair_comparison_by_cohort.parquet", index=False)
+            flat.to_csv(agg / "hawkes_gate_pair_comparison_by_cohort.csv", index=False)
+            daily_pair_keys = [column for column in pair_keys if column not in {"datetime", "sleeve_id"}]
+            pair_daily = (
+                flat.groupby(daily_pair_keys, dropna=False)[list(pair_metrics.values())]
+                .mean()
+                .reset_index()
+            )
+            pair_daily.to_parquet(agg / "hawkes_gate_pair_comparison_by_date.parquet", index=False)
+            pair_daily.to_csv(agg / "hawkes_gate_pair_comparison_by_date.csv", index=False)
+            overall_pair_keys = [column for column in daily_pair_keys if column != "trade_date"]
+            pair_overall = (
+                pair_daily.groupby(overall_pair_keys, dropna=False)[list(pair_metrics.values())]
+                .mean()
+                .reset_index()
+            )
+            pair_overall.to_parquet(agg / "hawkes_gate_pair_comparison_overall.parquet", index=False)
+            pair_overall.to_csv(agg / "hawkes_gate_pair_comparison_overall.csv", index=False)
+
     report = [
-        "# NFF v2.1 neutralized research report",
+        "# NFF v2.2 neutralized OOF research report",
         "",
         f"- Finished UTC: {utc_now()}",
         "- RankIC method: v1-compatible minute-level cross-sectional Spearman IC, then daily mean over minutes.",
         "- Corrected pooled RankIC: each minute is percentile-ranked and demeaned before pooling to avoid cross-section-size mechanical correlation.",
         "- Neutralization: per-minute OLS residualization against log price, previous 20d ADV, same-minute dollar volume, active-second ratio, trade count, realized vol, and an intraday beta proxy.",
-        "- Incremental validation: same-day 15m sampled cross-sectional ridge rank-model screen comparing Traditional baseline to +Minute-NVG/+Trade-NVG/+Hawkes bundles.",
+        "- Incremental validation: same-day 15m fixed-symbol-fold cross-sectional OOF ridge on one all-step common sample; this is not temporal OOS.",
         "- Alpha feature policy: representative semantic features only; readiness/warmup/coverage/activity/stale/trade-count axes are masks or controls, not alpha columns.",
         "- Tradability: liquid-common universe requires price >= 5, previous 20d ADV top 1000, 20 lookback days, real entry/exit volume, trade_count >= 1, and active-second/stale filters when available.",
         "- Labels: next-minute open/vwap/close entry-to-future-exit return labels plus liquidity deterioration, realized volatility, jump-tail event, and execution-cost proxy.",
-        "- Portfolio proxy: same-sleeve long-short variants covering long-high, contrarian, 5% tails, 30/60m rebalance, VWAP execution labels, and Hawkes liquidity gate.",
+        "- Primary execution result: VWAP-to-VWAP. Open-to-open is diagnostic. Hawkes gate comparisons use a shared pre-gate sample.",
         "- Sector neutralization: not applied because no local sector reference file was found in the warehouse scan; this is recorded in each date meta.",
         "- July should be read as a stress slice, not true OOS.",
     ]
-    (agg / "final_report_v2_1.md").write_text("\n".join(report) + "\n", encoding="utf-8")
+    (agg / "final_report_v2_2.md").write_text("\n".join(report) + "\n", encoding="utf-8")
 
 
 def resource_snapshot(out_root: Path) -> dict[str, Any]:
     memory = psutil.virtual_memory()
     cpu = psutil.cpu_percent(interval=0.2)
     d_usage = shutil.disk_usage(str(out_root.anchor or out_root.drive + "\\"))
+    worker_rss: list[int] = []
+    try:
+        children = psutil.Process(os.getpid()).children(recursive=True)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        children = []
+    for child in children:
+        try:
+            worker_rss.append(int(child.memory_info().rss))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
     return {
         "cpu_percent": round(float(cpu), 2),
         "memory_percent": round(float(memory.percent), 2),
         "memory_available_gb": round(memory.available / 1024**3, 2),
         "disk_free_gb": round(d_usage.free / 1024**3, 2),
+        "worker_process_count": len(worker_rss),
+        "worker_rss_total_gb": round(sum(worker_rss) / 1024**3, 3),
+        "worker_rss_max_gb": round(max(worker_rss, default=0) / 1024**3, 3),
     }
 
 
@@ -2073,6 +2568,12 @@ def worker_command(args: argparse.Namespace, out_root: Path, controls_path: Path
         str(args.rebalance_minutes),
         "--cost-bps-per-turnover",
         str(args.cost_bps_per_turnover),
+        "--oof-folds",
+        str(args.oof_folds),
+        "--oof-ridge-alpha",
+        str(args.oof_ridge_alpha),
+        "--oof-min-train-n",
+        str(args.oof_min_train_n),
     ]
     if args.config:
         command.extend(["--config", args.config])
@@ -2122,13 +2623,16 @@ def main() -> int:
     parser.add_argument("--allow-mixed-contracts", action="store_true")
     parser.add_argument("--rebalance-minutes", type=int, default=15)
     parser.add_argument("--cost-bps-per-turnover", type=float, default=1.0)
+    parser.add_argument("--oof-folds", type=int, default=OOF_FOLDS)
+    parser.add_argument("--oof-ridge-alpha", type=float, default=OOF_RIDGE_ALPHA)
+    parser.add_argument("--oof-min-train-n", type=int, default=OOF_MIN_TRAIN_N)
     args = parser.parse_args()
 
     explicit_flags = _cli_flags(sys.argv[1:])
     config = load_yaml_config(args.config)
     apply_config_globals(config)
     effective_config = apply_config_args(args, config, explicit_flags)
-    out_root = Path(args.out_root) if args.out_root else RESEARCH_ROOT / "runs" / f"v2_1_neutralized_{args.run_id}"
+    out_root = Path(args.out_root) if args.out_root else RESEARCH_ROOT / "runs" / f"v2_2_oof_{args.run_id}"
     out_root.mkdir(parents=True, exist_ok=True)
     controls_path = Path(args.controls_path) if args.controls_path else build_daily_controls(
         args.start_date,
@@ -2169,6 +2673,9 @@ def main() -> int:
                     args.allow_mixed_contracts,
                     args.rebalance_minutes,
                     args.cost_bps_per_turnover,
+                    args.oof_folds,
+                    args.oof_ridge_alpha,
+                    args.oof_min_train_n,
                 ),
                 indent=2,
                 default=str,
