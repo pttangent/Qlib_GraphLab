@@ -1,0 +1,143 @@
+research_version: "2.4"
+base_runner_version: "2.3"
+
+run:
+  name: v2_4_cached_fastpath_full_20260803
+  script: nff_research/v2_4_optimized_runner.py
+  start_date: "2026-01-02"
+  end_date: "2026-07-22"
+  horizons: [15, 30, 60, 120]
+  initial_parallel: 12
+  max_parallel: 16
+  min_parallel: 4
+  target_cpu_percent: 90
+  memory_high_water_percent: 78
+  memory_min_available_gb: 32
+  disk_free_floor_gb: 50
+  launch_batch_size: 2
+  retries: 1
+  min_cross_section_n: 30
+  allow_mixed_contracts: false
+
+local_paths:
+  warehouse_root: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_warehouse"
+  research_root: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_research"
+  raw_1m_root: "D:/DEV/AnotherNetworkFactory/RAW_DATA/1m"
+  nodefactorfactory_src: "D:/DEV/AnotherNetworkFactory/NodeFactorFactory/src"
+  controls_path: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_research/derived_inputs/daily_bar_controls_v2_1/daily_controls_2026-01-02_2026-07-22.parquet"
+
+optimization:
+  contract: v2_4_cpu_fastpath_v1
+  reference_runner: nff_research/v2_1_neutralized_runner.py
+  exact_column_projection: true
+  prefer_materialized_hawkes_derived: true
+  derive_hawkes_only_as_fallback: true
+  rank_once_for_minute_and_pooled_ic: true
+  residual_feature_cache_by_identical_sample: true
+  oof_rank_matrix_once_per_minute: true
+  oof_symbol_fold_cache: true
+  prefilter_rebalance_minutes: 15
+  date_scheduler: longest_processing_time_first_by_warehouse_bytes
+  stage_timing_in_daily_meta: true
+  blas_threads_per_worker: 1
+  expected_semantics: exact_reference_equivalence
+
+labels:
+  - return_open_to_open
+  - return_vwap_to_vwap
+  - return_close_to_close
+  - liquidity_deterioration
+  - realized_volatility
+  - jump_tail_event
+  - execution_cost_proxy
+
+rank_ic_methods:
+  - minute_mean_cs_rank_ic
+  - pooled_cs_demeaned_pct_rank_ic
+  - minute_mean_cs_rank_ic_residualized
+  - pooled_cs_demeaned_pct_rank_ic_residualized
+
+universes:
+  - own_feature_universe
+  - common_structural
+  - liquid_common_adv20_top1000
+
+alpha_feature_policy:
+  representative_feature_count: 55
+  exact_projection_from_registry: true
+  exclude_from_alpha:
+    - hawkes_ready
+    - warmup_fraction
+    - observation_coverage
+    - active_second_ratio
+    - active_second_count
+    - stale_ratio
+    - trade_count
+  use_excluded_axes_as:
+    - eligibility_mask
+    - neutralization_control
+
+neutralization:
+  applies_to: return_labels_only
+  controls:
+    - log_price
+    - previous_20d_adv
+    - same_minute_dollar_volume
+    - active_second_ratio_300s
+    - log_trade_count
+    - realized_vol_60m
+    - intraday_market_sensitivity_60m
+  unavailable_controls:
+    - sector
+
+portfolio_proxy:
+  rebalance_minutes: 15
+  prefilter_before_groupby: true
+  universe: liquid_common_adv20_top1000
+  construction: equal_weight_long_short_variants
+  cost_bps_per_turnover: 1.0
+  accounting: same_sleeve_turnover_with_turnover_controlled_diagnostic_variant
+  variants:
+    - long_high_q10_15m
+    - contrarian_q10_15m
+    - contrarian_q05_30m
+    - contrarian_q05_60m
+    - contrarian_q05_30m_turnover_controlled
+    - contrarian_q05_30m_hawkes_total_intensity_pair_ungated
+    - contrarian_q05_30m_hawkes_total_intensity_gate
+    - contrarian_q05_30m_hawkes_shock_score_pair_ungated
+    - contrarian_q05_30m_hawkes_shock_score_gate
+    - contrarian_q05_30m_hawkes_endogenous_shock_pair_ungated
+    - contrarian_q05_30m_hawkes_endogenous_shock_gate
+    - contrarian_q05_30m_hawkes_exogenous_shock_pair_ungated
+    - contrarian_q05_30m_hawkes_exogenous_shock_gate
+    - contrarian_q05_30m_hawkes_persistence_pair_ungated
+    - contrarian_q05_30m_hawkes_persistence_gate
+  primary_execution_label: return_vwap_to_vwap
+  turnover_controlled_variant:
+    target: contrarian_q05_30m
+    no_trade_band_quantile: 0.10
+    minimum_hold_rebalances: 2
+    signal_change_threshold_percentile: 0.10
+    max_replacement_fraction_per_side: 0.50
+
+session:
+  timezone: America/New_York
+  regular_session: "09:30 <= local_time < 16:00"
+
+incremental_validation:
+  method: fixed_symbol_fold_cross_sectional_oof_ridge
+  folds: 5
+  fold_algorithm: sha256_normalized_symbol_first8_big_endian_modulo
+  ridge_alpha: 0.001
+  min_train_n: 40
+  sample_policy: largest_step_common_complete_case_all_steps_or_drop_minute
+  optimized_execution: one_ranked_matrix_and_one_fold_vector_per_minute
+  label_evidence_roles:
+    return_vwap_to_vwap: primary_execution_return
+    return_open_to_open: diagnostic_execution_sensitive_return
+    return_close_to_close: diagnostic_execution_sensitive_return
+    liquidity_deterioration: primary_state_prediction
+    realized_volatility: primary_state_prediction
+    jump_tail_event: diagnostic_jump_orthogonality
+    execution_cost_proxy: diagnostic_mechanical_proxy
