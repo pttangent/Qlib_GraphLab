@@ -442,7 +442,14 @@ class NFFDataLoader(DataLoader):
         frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
         frame["available_time"] = pd.to_datetime(frame["available_time"], utc=True, errors="coerce")
         frame["symbol"] = frame["symbol"].astype(str).str.upper().str.strip()
-        frame = frame.dropna(subset=["symbol_id", "symbol", "timestamp", "available_time"])
+        key_valid = (
+            frame["symbol_id"].notna()
+            & frame["symbol"].notna()
+            & frame["timestamp"].notna()
+            & frame["available_time"].notna()
+        )
+        if not bool(key_valid.all()):
+            frame = frame.loc[key_valid].copy(deep=False)
         duplicate_count = int(frame.duplicated(["symbol_id", "timestamp"]).sum())
         if duplicate_count:
             raise ValueError(f"NFF source {spec.name} has {duplicate_count} duplicate symbol/timestamp rows")
