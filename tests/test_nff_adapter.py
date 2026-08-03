@@ -220,12 +220,13 @@ def test_nff_loader_filters_invalid_key_columns(tmp_path: Path):
 
     result = loader.load(
         instruments="all",
-        start_time="2026-01-05T14:30:00Z",
-        end_time="2026-01-05T14:30:00Z",
+        start_time="2026-01-05T14:31:00Z",
+        end_time="2026-01-05T14:31:00Z",
     )
 
     assert list(result.index.get_level_values("instrument").unique()) == ["AAPL"]
     assert len(result) == 1
+    assert result.index[0] == (pd.Timestamp("2026-01-05T14:31:00"), "AAPL")
     assert result.iloc[0][("feature", "bars_1m__close")] == pytest.approx(10.0)
     assert loader.last_load_report["sources"][0]["rows"] == 1
 
