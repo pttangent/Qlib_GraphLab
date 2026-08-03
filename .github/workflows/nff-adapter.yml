@@ -7,16 +7,21 @@ on:
       - "tests/test_nff_adapter.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
+      - "configs/v2_1_neutralized_full.yaml"
+      - "nff_research/**"
       - "docs/component/nff_adapter.md"
       - ".github/workflows/nff-adapter.yml"
   push:
     branches:
       - "agent/nff-direct-qlib-adapter"
+      - "codex/**"
     paths:
       - "qlib/contrib/data/nff.py"
       - "tests/test_nff_adapter.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
+      - "configs/v2_1_neutralized_full.yaml"
+      - "nff_research/**"
       - ".github/workflows/nff-adapter.yml"
 
 permissions:
