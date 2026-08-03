@@ -1887,10 +1887,16 @@ def main() -> int:
         return 0
 
     effective_config["paths"]["controls_path"] = str(controls_path)
-    contract, contract_hash = build_run_contract(out_root, controls_path, effective_config)
-    args.contract_hash = args.contract_hash or contract_hash
-    if args.contract_hash != contract_hash:
-        raise RuntimeError(f"--contract-hash {args.contract_hash} does not match current run contract {contract_hash}")
+    if args.worker and args.contract_hash:
+        existing_hash = read_run_contract_hash(out_root)
+        if existing_hash and existing_hash != args.contract_hash:
+            raise RuntimeError(f"worker contract hash {args.contract_hash} does not match existing run contract {existing_hash}")
+        contract_hash = args.contract_hash
+    else:
+        _, contract_hash = build_run_contract(out_root, controls_path, effective_config)
+        args.contract_hash = args.contract_hash or contract_hash
+        if args.contract_hash != contract_hash:
+            raise RuntimeError(f"--contract-hash {args.contract_hash} does not match current run contract {contract_hash}")
 
     if args.worker:
         if not args.worker_date:
