@@ -7,6 +7,7 @@ on:
       - "tests/test_nff_adapter.py"
       - "tests/test_nff_research_v2_2.py"
       - "tests/test_nff_research_v2_4_fastpath.py"
+      - "tests/test_nff_research_v2_4_entry.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
       - "configs/v2_1_neutralized_full.yaml"
@@ -24,6 +25,7 @@ on:
       - "tests/test_nff_adapter.py"
       - "tests/test_nff_research_v2_2.py"
       - "tests/test_nff_research_v2_4_fastpath.py"
+      - "tests/test_nff_research_v2_4_entry.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
       - "configs/v2_1_neutralized_full.yaml"
@@ -56,6 +58,7 @@ jobs:
           tests/test_nff_adapter.py
           tests/test_nff_research_v2_2.py
           tests/test_nff_research_v2_4_fastpath.py
+          tests/test_nff_research_v2_4_entry.py
           --tb=short
       - name: Compile executable research entrypoints
         run: >-
@@ -65,6 +68,8 @@ jobs:
           tests/test_nff_adapter.py
           tests/test_nff_research_v2_2.py
           tests/test_nff_research_v2_4_fastpath.py
+          tests/test_nff_research_v2_4_entry.py
           nff_research/v2_multilabel_runner.py
           nff_research/v2_1_neutralized_runner.py
           nff_research/v2_4_optimized_runner.py
+          nff_research/v2_4_optimized_entry.py
