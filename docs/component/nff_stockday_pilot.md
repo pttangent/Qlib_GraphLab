@@ -136,5 +136,11 @@ P2 must prove:
 - reports contain MSE, MAE and cross-sectional RankIC metrics;
 - no GFF or GAL path is accessed.
 
+## Automated validation
+
+The branch workflow runs the P1/P2 tests, the existing NFF adapter regression
+tests and Python compilation on both Ubuntu and Windows. This verifies the
+causal episode contract, model tensor contract and Windows-compatible entrypoints.
+
 A later P3 may add a support encoder and daily adapter, but it must compare
 against P2 using exactly the same query samples and temporal test dates.
