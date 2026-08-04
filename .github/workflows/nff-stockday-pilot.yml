@@ -5,26 +5,39 @@ on:
     paths:
       - "qlib/contrib/data/nff_episode.py"
       - "qlib/contrib/model/nff_generic.py"
+      - "qlib/contrib/model/nff_daily_adapter.py"
       - "examples/nff_stockday_episode.py"
       - "examples/nff_generic_baseline.py"
+      - "examples/nff_daily_adapter.py"
       - "configs/nff_stockday_generic_pilot.yaml"
+      - "configs/nff_stockday_adapter_pilot.yaml"
       - "tests/test_nff_episode.py"
       - "tests/test_nff_generic.py"
+      - "tests/test_nff_daily_adapter.py"
+      - "tests/test_nff_adapter_pairing.py"
       - "docs/component/nff_stockday_pilot.md"
+      - "docs/component/nff_daily_adapter.md"
       - ".github/workflows/nff-stockday-pilot.yml"
   push:
     branches:
       - "agent/nff-stockday-episode-generic-pilot"
+      - "agent/nff-daily-context-adapter-pilot"
       - "codex/**"
     paths:
       - "qlib/contrib/data/nff_episode.py"
       - "qlib/contrib/model/nff_generic.py"
+      - "qlib/contrib/model/nff_daily_adapter.py"
       - "examples/nff_stockday_episode.py"
       - "examples/nff_generic_baseline.py"
+      - "examples/nff_daily_adapter.py"
       - "configs/nff_stockday_generic_pilot.yaml"
+      - "configs/nff_stockday_adapter_pilot.yaml"
       - "tests/test_nff_episode.py"
       - "tests/test_nff_generic.py"
+      - "tests/test_nff_daily_adapter.py"
+      - "tests/test_nff_adapter_pairing.py"
       - "docs/component/nff_stockday_pilot.md"
+      - "docs/component/nff_daily_adapter.md"
       - ".github/workflows/nff-stockday-pilot.yml"
 
 permissions:
@@ -51,6 +64,8 @@ jobs:
           python -m pytest -q
           tests/test_nff_episode.py
           tests/test_nff_generic.py
+          tests/test_nff_daily_adapter.py
+          tests/test_nff_adapter_pairing.py
           tests/test_nff_adapter.py
           --tb=short
       - name: Compile pilot entrypoints
@@ -58,7 +73,11 @@ jobs:
           python -m py_compile
           qlib/contrib/data/nff_episode.py
           qlib/contrib/model/nff_generic.py
+          qlib/contrib/model/nff_daily_adapter.py
           examples/nff_stockday_episode.py
           examples/nff_generic_baseline.py
+          examples/nff_daily_adapter.py
           tests/test_nff_episode.py
           tests/test_nff_generic.py
+          tests/test_nff_daily_adapter.py
+          tests/test_nff_adapter_pairing.py
