@@ -1,0 +1,68 @@
+name: NFF context decomposition
+
+on:
+  pull_request:
+    paths:
+      - "qlib/contrib/data/nff_context.py"
+      - "qlib/contrib/model/nff_context_decomposition.py"
+      - "examples/nff_context_cache.py"
+      - "examples/nff_context_model.py"
+      - "configs/nff_context_decomposition_pilot.yaml"
+      - "tests/test_nff_context_cache.py"
+      - "tests/test_nff_context_decomposition.py"
+      - "docs/component/nff_context_decomposition.md"
+      - ".github/workflows/nff-context-decomposition.yml"
+  push:
+    branches:
+      - "agent/nff-context-decomposition-pilot"
+      - "codex/**"
+    paths:
+      - "qlib/contrib/data/nff_context.py"
+      - "qlib/contrib/model/nff_context_decomposition.py"
+      - "examples/nff_context_cache.py"
+      - "examples/nff_context_model.py"
+      - "configs/nff_context_decomposition_pilot.yaml"
+      - "tests/test_nff_context_cache.py"
+      - "tests/test_nff_context_decomposition.py"
+      - "docs/component/nff_context_decomposition.md"
+      - ".github/workflows/nff-context-decomposition.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install Qlib and test dependencies
+        run: python -m pip install -e ".[dev]" torch
+      - name: Run NFF context tests and regressions
+        run: >-
+          python -m pytest -q
+          tests/test_nff_context_cache.py
+          tests/test_nff_context_decomposition.py
+          tests/test_nff_daily_adapter.py
+          tests/test_nff_adapter_pairing.py
+          tests/test_nff_episode.py
+          tests/test_nff_generic.py
+          tests/test_nff_adapter.py
+          --tb=short
+      - name: Compile NFF context entrypoints
+        run: >-
+          python -m py_compile
+          qlib/contrib/data/nff_context.py
+          qlib/contrib/model/nff_context_decomposition.py
+          examples/nff_context_cache.py
+          examples/nff_context_model.py
+          tests/test_nff_context_cache.py
+          tests/test_nff_context_decomposition.py
