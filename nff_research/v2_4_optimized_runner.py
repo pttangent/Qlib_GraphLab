@@ -308,7 +308,7 @@ def minute_rank_ic_summary_fast(
             R.append_ic_rows(rows, minute_stats, trade_date, universe, "raw", "minute_mean_cs_rank_ic", family, horizon, coverage, label_non_null)
             R.append_ic_rows(rows, pooled_stats, trade_date, universe, "raw", "pooled_cs_demeaned_pct_rank_ic", family, horizon, coverage, label_non_null)
 
-            if not family.startswith("return_") or universe == "own_feature_universe":
+            if not family.startswith("return_") or universe not in {"common_structural", "liquid_common_adv20_top1000"}:
                 continue
             controls_sub = controls.loc[base_mask]
             cache_key = (universe, _index_cache_key(feature_frame.index))

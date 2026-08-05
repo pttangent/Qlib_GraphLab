@@ -19,6 +19,48 @@ def _symbols(n: int) -> np.ndarray:
     return np.array([f"SYM{i:04d}" for i in range(n)], dtype=object)
 
 
+def test_universe_masks_expose_pit_adv_layers_and_final_trading_alias():
+    index = pd.MultiIndex.from_product(
+        [[pd.Timestamp("2026-01-02 14:30:00", tz="UTC")], [f"SYM{i:04d}" for i in range(6)]],
+        names=["datetime", "instrument"],
+    )
+    features = pd.DataFrame(
+        {
+            "minute_nvg__price_nvg_30m_top_bottom_asymmetry": 1.0,
+            "trade_nvg__trade_flow_path_300s_terminal_position": 1.0,
+            "hawkes_derived__hawkes_signed_pressure": 1.0,
+            "bars_1m__close": 10.0,
+            "bars_1m__volume": 100.0,
+            "trades_1m_core__trade_count": 10.0,
+            "trade_nvg__trade_active_second_ratio_300s": 0.5,
+            "trade_nvg__trade_price_stale_ratio_300s": 0.0,
+        },
+        index=index,
+    )
+    controls = pd.DataFrame(
+        {
+            "control__adv20_days": 20.0,
+            "control__adv20_top500": [1, 1, 1, 0, 0, 0],
+            "control__adv20_top1000": 1.0,
+            "control__adv20_top2000": 1.0,
+            "control__adv20_top3000": 1.0,
+        },
+        index=index,
+    )
+    masks = runner.universe_masks(features, controls)
+    assert set(masks) >= {
+        "all_pit_eligible",
+        "common_structural",
+        "liquid_common_adv20_top500",
+        "liquid_common_adv20_top1000",
+        "liquid_common_adv20_top2000",
+        "liquid_common_adv20_top3000",
+        "final_trading_universe",
+    }
+    assert masks["liquid_common_adv20_top500"].sum() == 3
+    assert masks["final_trading_universe"].equals(masks["liquid_common_adv20_top1000"])
+
+
 def test_symbol_fold_known_vectors():
     expected = {"AAPL": 4, "MSFT": 2, "NVDA": 4, "BRK.B": 0, "TSLA": 1}
 
