@@ -2,7 +2,7 @@ research_version: "2.5"
 base_runner_version: "2.4"
 
 run:
-  name: v2_5_full_campaign_20260806
+  name: v2_5_full_campaign_20260806_r2
   script: nff_research/v2_5_full_entry.py
   start_date: "2026-01-02"
   end_date: "2026-07-22"
