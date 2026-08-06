@@ -2,21 +2,59 @@ from __future__ import annotations
 
 """Canonical v2.7 entrypoint.
 
-Every detached date worker must execute this file so that the real-schema,
-qcut-equivalent, universe and multi-model patches are installed in both the
-parent scheduler and child processes.
+Every detached date worker executes this file so that real-schema,
+qcut-equivalent, universe, multi-model and family-ablation patches are installed
+in both the parent scheduler and child processes.
 """
 
 import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
+from nff_research import v2_7_ablation as ABLATION
 from nff_research import v2_7_atomic_entry as ENTRY
 from nff_research import v2_7_models as MODELS
 
 
 C = ENTRY.C
-C.BASE.run_temporal_oos = MODELS.run_temporal_oos_multi
+_ORIGINAL_RANK_FEATURES = MODELS._rank_features
+_ORIGINAL_FIT_FEATURE_CONTRACT = MODELS._fit_feature_contract
+
+
+def _rank_features_schema_safe(frame, features, directions):
+    work = frame.copy(deep=False)
+    missing = [feature for feature in features if feature not in work]
+    if missing:
+        work = work.copy()
+        for feature in missing:
+            work[feature] = np.nan
+    return _ORIGINAL_RANK_FEATURES(work, features, directions)
+
+
+def _fit_feature_contract_schema_safe(train, candidates, **kwargs):
+    available = [feature for feature in candidates if feature in train]
+    return _ORIGINAL_FIT_FEATURE_CONTRACT(train, available, **kwargs)
+
+
+MODELS._rank_features = _rank_features_schema_safe
+MODELS._fit_feature_contract = _fit_feature_contract_schema_safe
+# Ablation imports the same module object, so it receives the schema-safe
+# functions without a second implementation.
+
+
+def _run_temporal_oos_complete(run_root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    result = MODELS.run_temporal_oos_multi(run_root, config)
+    if bool(config.get("walk_forward", {}).get("family_ablation", True)):
+        try:
+            result["family_ablation"] = ABLATION.run_family_ablation(run_root, config)
+        except Exception as exc:
+            result["family_ablation"] = {"status": "MODEL_FAILED", "error": repr(exc)}
+    return result
+
+
+C.BASE.run_temporal_oos = _run_temporal_oos_complete
 
 
 def _install_worker_command() -> None:
@@ -79,6 +117,14 @@ def _write_final_report(run_root: Path, model_result: dict[str, Any], config: di
         json.dumps(model_result.get("model_failures", []), indent=2, ensure_ascii=False, default=str),
         "```",
         "",
+        "## Family ablation",
+        "",
+        "Each A-K/S family is removed before train-only feature selection and Ridge hyperparameter selection; the model is then retrained and tested on the same chronological fold.",
+        "",
+        "```json",
+        json.dumps(model_result.get("family_ablation", {}), indent=2, ensure_ascii=False, default=str),
+        "```",
+        "",
         "## Account and capacity",
         "",
         "High expected-return predictions are long and low predictions are short. Orders are participation-limited; spread, impact and borrow remain estimated because a complete quote/order-book tape is unavailable.",
@@ -96,7 +142,6 @@ def _write_final_report(run_root: Path, model_result: dict[str, Any], config: di
         "```",
     ]
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    # v2.6 expects this compatibility path when it assembles its final report.
     compatibility = run_root / "reports" / "final_report_v2_5.md"
     compatibility.write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
 
