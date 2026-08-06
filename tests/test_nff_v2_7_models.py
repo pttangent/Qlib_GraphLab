@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 
-from nff_research import v2_7_atomic_entry as ENTRY
+from nff_research import v2_7_deciles as DECILES
 from nff_research import v2_7_models as MODELS
 from nff_research import v2_7_runtime_hardening as HARDEN
 
@@ -35,7 +37,9 @@ def test_vectorized_deciles_match_qcut_unique_rank_counts() -> None:
     signal = pd.Series(np.arange(23, dtype="float64"), index=index)
     label = pd.Series(np.arange(23, dtype="float64") / 100.0, index=index)
     control = pd.Series(1.0, index=index)
-    rows = ENTRY._decile_feature_rows_qcut_exact(
+    research = SimpleNamespace(infer_bundle=lambda feature: "test")
+    rows = DECILES.decile_feature_rows(
+        research,
         "factor",
         signal,
         label,
@@ -54,6 +58,19 @@ def test_vectorized_deciles_match_qcut_unique_rank_counts() -> None:
     ).value_counts().sort_index()
     expected.index = expected.index + 1
     assert actual.to_dict() == expected.to_dict()
+
+
+def test_closed_form_deciles_match_qcut_for_many_cross_section_sizes() -> None:
+    for count in range(10, 101):
+        ranks = np.arange(1, count + 1, dtype="float64")
+        actual = DECILES.qcut_deciles_from_unique_ranks(ranks, np.full(count, count))
+        expected = pd.qcut(
+            pd.Series(ranks),
+            10,
+            labels=False,
+            duplicates="drop",
+        ).to_numpy() + 1
+        np.testing.assert_array_equal(actual, expected)
 
 
 def test_path_metrics_are_causal_and_window_local() -> None:
