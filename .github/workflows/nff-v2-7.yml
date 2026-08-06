@@ -29,7 +29,7 @@ jobs:
       - name: Install targeted dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy pandas pyarrow pyyaml pytest
+          python -m pip install numpy pandas pyarrow pyyaml pytest psutil
       - name: Syntax check v2.7 modules
         run: |
           python -m py_compile \
