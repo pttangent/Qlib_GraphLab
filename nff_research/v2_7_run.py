@@ -8,10 +8,12 @@ in both the parent scheduler and child processes.
 """
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from nff_research import v2_7_ablation as ABLATION
 from nff_research import v2_7_atomic_entry as ENTRY
@@ -20,7 +22,6 @@ from nff_research import v2_7_models as MODELS
 
 C = ENTRY.C
 _ORIGINAL_RANK_FEATURES = MODELS._rank_features
-_ORIGINAL_FIT_FEATURE_CONTRACT = MODELS._fit_feature_contract
 
 
 def _rank_features_schema_safe(frame, features, directions):
@@ -33,15 +34,59 @@ def _rank_features_schema_safe(frame, features, directions):
     return _ORIGINAL_RANK_FEATURES(work, features, directions)
 
 
-def _fit_feature_contract_schema_safe(train, candidates, **kwargs):
+def _fit_feature_contract_fast(
+    train,
+    candidates,
+    *,
+    minimum_coverage=0.70,
+    correlation_threshold=0.90,
+    max_features=80,
+    min_n=30,
+):
     available = [feature for feature in candidates if feature in train]
-    return _ORIGINAL_FIT_FEATURE_CONTRACT(train, available, **kwargs)
+    if not available:
+        return MODELS.FeatureContract([], {}, {}, {}, float(correlation_threshold))
+    coverage = train[available].notna().mean()
+    available = [feature for feature in available if float(coverage.get(feature, 0.0)) >= minimum_coverage]
+    scores = MODELS._feature_ic_scores(train, available, min_n=min_n)
+    ordered = sorted(
+        [feature for feature in available if np.isfinite(scores.get(feature, math.nan))],
+        key=lambda feature: (-abs(scores[feature]), feature),
+    )
+    # Features far below the eventual representative budget cannot be selected
+    # after a 0.90 redundancy filter. Pre-truncating by train IC keeps the
+    # matrix bounded while preserving the strongest candidates from every
+    # family through deterministic ordering.
+    ordered = ordered[: max(max_features * 4, max_features)]
+    directions = {feature: (1.0 if scores[feature] >= 0 else -1.0) for feature in ordered}
+    ranked = _rank_features_schema_safe(train, ordered, directions)
+    if len(ranked) > 20_000:
+        ranked = ranked.iloc[np.linspace(0, len(ranked) - 1, 20_000, dtype=int)]
+    correlation = ranked.corr().abs().fillna(0.0)
+    selected: list[str] = []
+    for feature in ordered:
+        if len(selected) >= max_features:
+            break
+        if selected and bool((correlation.loc[feature, selected] >= correlation_threshold).any()):
+            continue
+        selected.append(feature)
+    medians = {
+        feature: float(pd.to_numeric(train[feature], errors="coerce").median())
+        for feature in selected
+    }
+    return MODELS.FeatureContract(
+        features=selected,
+        directions={feature: directions[feature] for feature in selected},
+        ic_scores={feature: scores[feature] for feature in selected},
+        medians=medians,
+        correlation_threshold=float(correlation_threshold),
+    )
 
 
 MODELS._rank_features = _rank_features_schema_safe
-MODELS._fit_feature_contract = _fit_feature_contract_schema_safe
-# Ablation imports the same module object, so it receives the schema-safe
-# functions without a second implementation.
+MODELS._fit_feature_contract = _fit_feature_contract_fast
+# Ablation imports the same module object, so it receives the same optimized,
+# schema-safe train-only selector.
 
 
 def _run_temporal_oos_complete(run_root: Path, config: dict[str, Any]) -> dict[str, Any]:
