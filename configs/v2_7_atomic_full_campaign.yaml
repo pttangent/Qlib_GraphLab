@@ -3,7 +3,7 @@ base_runner_version: "2.6-full-defined"
 
 run:
   name: v2_7_atomic_full_defined_20260806_r1
-  script: nff_research/v2_7_atomic_entry.py
+  script: nff_research/v2_7_run.py
   start_date: "2026-01-02"
   end_date: "2026-07-22"
   horizons: [1, 5, 15, 30, 60]
@@ -118,7 +118,7 @@ portfolio_proxy:
     max_replacement_fraction_per_side: 0.50
 
 incremental_validation:
-  method: temporal_oos_ridge_with_train_only_feature_selection
+  method: temporal_oos_with_train_only_feature_selection
   folds: 5
   ridge_alpha: 0.001
   min_train_n: 40
@@ -128,10 +128,23 @@ walk_forward:
   validation_days: 10
   test_days: 10
   step_days: 10
-  primary_model: ridge
-  models: [equal_weight, ic_weight, ridge, elastic_net, lightgbm, gru]
   primary_horizon: 30
   primary_label: return_vwap_to_vwap
+  models: [equal_weight, ic_weight, ridge, elastic_net, lightgbm, gru]
+  minimum_feature_coverage: 0.70
+  redundancy_correlation: 0.90
+  max_features: 80
+  ridge_alphas: [0.001, 0.01, 0.1, 1.0]
+  elastic_alphas: [0.0005, 0.001, 0.005]
+  elastic_l1_ratios: [0.1, 0.5, 0.9]
+  max_tree_train_rows: 300000
+  lightgbm_threads: 8
+  gru:
+    sequence_length: 15
+    hidden_size: 32
+    epochs: 3
+    batch_size: 1024
+    max_train_sequences: 200000
   train_only_direction_freeze: true
   train_only_redundancy_filter: true
   family_ablation: true
