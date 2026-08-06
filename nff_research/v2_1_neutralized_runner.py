@@ -233,9 +233,24 @@ def utc_now() -> str:
 
 def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(value, indent=2, default=str, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    # Status is written by the scheduler and the worker progress bridge.
+    # Unique staging files avoid Windows replace collisions between writers.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(value, indent=2, default=str, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        for attempt in range(6):
+            try:
+                tmp.replace(path)
+                return
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.03 * (attempt + 1))
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def read_status(path: Path) -> dict[str, Any]:
