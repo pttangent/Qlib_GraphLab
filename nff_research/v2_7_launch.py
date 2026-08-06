@@ -18,6 +18,7 @@ from nff_research import v2_7_physical_contract as PHYSICAL
 from nff_research import v2_7_run as RUN
 from nff_research import v2_7_runtime_hardening as HARDEN
 from nff_research import v2_7_supplement_scope as SUPPLEMENT_SCOPE
+from nff_research import v2_7_symbol_id_supplement as SYMBOL_JOIN
 
 
 C = RUN.C
@@ -35,6 +36,10 @@ PHYSICAL.install(C)
 # The base directional helper iterates all B windows. Keep only the two S
 # factors explicitly admitted by the v3 contract (15m and 30m).
 SUPPLEMENT_SCOPE.install(C)
+# Preserve exact symbol_id/event_time metadata through the adapter and join the
+# out-of-adapter supplement namespace on the physical key. Supplement rows are
+# admitted only when their own availability maps no later than decision_time.
+SYMBOL_JOIN.install(C)
 
 _BASE_VALIDATION_SCORE = RUN.MODELS._validation_score
 
