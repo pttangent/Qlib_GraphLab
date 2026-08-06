@@ -34,6 +34,7 @@ jobs:
             nff_research/v2_7_atomic_campaign.py \
             nff_research/v2_7_atomic_entry.py \
             nff_research/v2_7_deciles.py \
+            nff_research/v2_7_formula_hardening.py \
             nff_research/v2_7_models.py \
             nff_research/v2_7_ablation.py \
             nff_research/v2_7_runtime_hardening.py \
@@ -49,6 +50,7 @@ jobs:
           source = Path("nff_research/v2_7_atomic_campaign.py").read_text(encoding="utf-8")
           entry = Path("nff_research/v2_7_atomic_entry.py").read_text(encoding="utf-8")
           deciles = Path("nff_research/v2_7_deciles.py").read_text(encoding="utf-8")
+          formulas = Path("nff_research/v2_7_formula_hardening.py").read_text(encoding="utf-8")
           models = Path("nff_research/v2_7_models.py").read_text(encoding="utf-8")
           run = Path("nff_research/v2_7_run.py").read_text(encoding="utf-8")
           hardening = Path("nff_research/v2_7_runtime_hardening.py").read_text(encoding="utf-8")
@@ -65,15 +67,18 @@ jobs:
           for label, token in required.items():
               assert token in source, f"missing semantic guard: {label}"
           assert "C._shift(activity, 1, frame)" in entry
-          assert "full_factor__s01__w30m" in entry
           assert "np.quantile(values, np.linspace(0.0, 1.0, 11), method=\"linear\")" in deciles
           assert "np.searchsorted(" in deciles and 'side="left"' in deciles
+          assert 'result["A14"]' in formulas and 'result["A16"]' in formulas
+          assert 'k["K22"]' in formulas and 'traditional__realized_vol_5m' in formulas
           assert 'long_index = block.index[ranked >= 1.0 - quantile]' in models
           assert 'short_index = block.index[ranked <= quantile]' in models
           assert '"elastic_net"' in models and '"lightgbm"' in models and '"gru"' in models
           assert "run_family_ablation" in run
           assert "factor_resolution.parquet" in hardening
           assert "price_path_" in hardening and "volume_path_" in hardening
-          assert "HARDEN.install(C)" in launch
+          assert "FORMULAS.install(C, HARDEN)" in launch
+          assert "expected 474 specs" in launch and "expected 476 specs" in launch
+          assert "factor_completion_gate.json" in launch
           assert "C._decile_feature_rows = _exact_decile_feature_rows" in launch
           PY
