@@ -38,6 +38,7 @@ jobs:
             nff_research/v2_7_formula_hardening.py \
             nff_research/v2_7_formula_semantic_patch.py \
             nff_research/v2_7_checkpoint_hardening.py \
+            nff_research/v2_7_physical_contract.py \
             nff_research/v2_7_models.py \
             nff_research/v2_7_ablation.py \
             nff_research/v2_7_runtime_hardening.py \
@@ -59,6 +60,7 @@ jobs:
           formulas = Path("nff_research/v2_7_formula_hardening.py").read_text(encoding="utf-8")
           semantics = Path("nff_research/v2_7_formula_semantic_patch.py").read_text(encoding="utf-8")
           checkpoints = Path("nff_research/v2_7_checkpoint_hardening.py").read_text(encoding="utf-8")
+          physical = Path("nff_research/v2_7_physical_contract.py").read_text(encoding="utf-8")
           models = Path("nff_research/v2_7_models.py").read_text(encoding="utf-8")
           run = Path("nff_research/v2_7_run.py").read_text(encoding="utf-8")
           hardening = Path("nff_research/v2_7_runtime_hardening.py").read_text(encoding="utf-8")
@@ -83,6 +85,11 @@ jobs:
           assert 'result["E20"]' in semantics and 'result["E21"]' in semantics
           assert "campaign.R.decile_curves = deciles_checkpointed" in checkpoints
           assert "upstream_fingerprint" in checkpoints
+          assert "PHYSICAL_EXECUTABLE_COUNT = 464" in physical
+          assert "LEGACY_FORMAL_COUNT = 476" in physical
+          assert '"C": ("10m", "15m", "30m")' in physical
+          assert '"G": ("15m", "30m", "60m")' in physical
+          assert "legacy_contract_gap.json" in physical
           assert 'long_index = block.index[ranked >= 1.0 - quantile]' in models
           assert 'short_index = block.index[ranked <= quantile]' in models
           assert '"elastic_net"' in models and '"lightgbm"' in models and '"gru"' in models
@@ -90,7 +97,6 @@ jobs:
           assert "factor_resolution.parquet" in hardening
           assert "price_path_" in hardening and "volume_path_" in hardening
           assert "FORMULAS.install(C, HARDEN)" in launch
-          assert "expected 474 specs" in launch and "expected 476 specs" in launch
-          assert "factor_completion_gate.json" in launch
+          assert "PHYSICAL.install(C)" in launch
           assert "C._decile_feature_rows = _exact_decile_feature_rows" in launch
           PY
