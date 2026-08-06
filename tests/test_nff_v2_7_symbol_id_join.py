@@ -75,6 +75,10 @@ def test_supplement_join_uses_symbol_id_event_time_and_pit_clock(tmp_path: Path)
     assert np.isclose(float(result.loc[(decision, "AAA"), column]), 0.25)
     # available 15:01:30 -> ceil 15:02 + one bar = 15:03, later than 15:02 decision.
     assert pd.isna(result.loc[(decision, "BBB"), column])
+    # Exact join metadata has served its purpose and must not survive into the
+    # float32 research feature frame.
+    assert JOIN.SYMBOL_ID_COLUMN not in result.columns
+    assert JOIN.EVENT_TIME_NS_COLUMN not in result.columns
     audit = pd.DataFrame(LAUNCH.C.SUPPLEMENT_JOIN_AUDIT)
     row = audit.loc[audit["dataset"].eq("minute_nvg_edge_raw")].iloc[0]
     assert row["join_mode"] == "symbol_id_event_time"
