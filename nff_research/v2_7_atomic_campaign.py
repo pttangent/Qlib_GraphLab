@@ -26,6 +26,10 @@ import numpy as np
 import pandas as pd
 import pyarrow.dataset as pads
 import yaml
+try:
+    from scipy.stats import rankdata
+except ImportError:  # pragma: no cover - scipy is part of the research runtime
+    rankdata = None
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -78,6 +82,19 @@ def _hash(value: Any) -> str:
 def _index_hash(index: pd.Index) -> str:
     values = pd.util.hash_pandas_object(index, index=True).to_numpy(dtype="uint64")
     return hashlib.sha256(values.tobytes()).hexdigest()
+
+
+def _rank_frame_average(frame: pd.DataFrame) -> pd.DataFrame:
+    """Match pandas average rank/NaN semantics without DataFrame rank overhead."""
+    if rankdata is None:
+        return frame.rank(method="average")
+    values = rankdata(
+        frame.to_numpy(dtype="float64", copy=False),
+        axis=0,
+        method="average",
+        nan_policy="omit",
+    )
+    return pd.DataFrame(values, index=frame.index, columns=frame.columns)
 
 
 def _atomic_json(path: Path, value: Any) -> None:
@@ -815,7 +832,7 @@ def _ranked_ic_stats_vectorized(
             continue
         admitted_minutes += 1
 
-        ranked_x_raw = block[feature_columns].rank(method="average")
+        ranked_x_raw = _rank_frame_average(block[feature_columns])
         x_raw = ranked_x_raw.to_numpy(dtype="float64", copy=False)
         valid = np.isfinite(x_raw) & y_valid[:, None]
         n = valid.sum(axis=0).astype("float64")
@@ -1018,7 +1035,7 @@ def _minute_rank_ic_summary_rank_cache(
             index_key = _index_hash(feature_frame.index)
             ranked_raw = raw_rank_cache.get(index_key)
             if ranked_raw is None:
-                ranked_raw = feature_frame[feature_columns].rank(method="average")
+                ranked_raw = _rank_frame_average(feature_frame[feature_columns])
                 raw_rank_cache[index_key] = ranked_raw
             minute_stats, pooled_stats = _ranked_ic_stats_from_ranked_features(
                 ranked_raw, label, feature_columns, min_n
@@ -1039,7 +1056,7 @@ def _minute_rank_ic_summary_rank_cache(
             label_resid = R._residualize_matrix(label.to_frame(label_column), controls_sub, min_n=max(min_n, 40))[label_column]
             ranked_resid = neutral_rank_cache.get(residual_key)
             if ranked_resid is None:
-                ranked_resid = feature_resid[feature_columns].rank(method="average")
+                ranked_resid = _rank_frame_average(feature_resid[feature_columns])
                 neutral_rank_cache[residual_key] = ranked_resid
             neut_minute, neut_pooled = _ranked_ic_stats_from_ranked_features(ranked_resid, label_resid, feature_columns, min_n)
             neutral_label_non_null = int(label_resid.notna().sum())
