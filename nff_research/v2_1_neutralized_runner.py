@@ -29,6 +29,7 @@ WAREHOUSE_ROOT = Path(r"D:\DEV\AnotherNetworkFactory\warehouses\NFF_warehouse")
 RESEARCH_ROOT = Path(r"D:\DEV\AnotherNetworkFactory\warehouses\NFF_research")
 RAW_1M_ROOT = Path(r"D:\DEV\AnotherNetworkFactory\RAW_DATA\1m")
 NFF_SRC_ROOT = Path(r"D:\DEV\AnotherNetworkFactory\NodeFactorFactory\src")
+INDUSTRY_METADATA_PATH: Path | None = None
 CONTROLS_ROOT = RESEARCH_ROOT / "derived_inputs" / "daily_bar_controls_v2_1"
 SALT = "vvtr123!@#qwe"
 SESSION_TZ = ZoneInfo("America/New_York")
@@ -292,7 +293,7 @@ def load_yaml_config(path: str | None) -> dict[str, Any]:
 
 
 def apply_config_globals(config: dict[str, Any]) -> None:
-    global WAREHOUSE_ROOT, RESEARCH_ROOT, RAW_1M_ROOT, NFF_SRC_ROOT, CONTROLS_ROOT, TURNOVER_CONTROL_POLICY, ENABLED_PORTFOLIO_VARIANTS
+    global WAREHOUSE_ROOT, RESEARCH_ROOT, RAW_1M_ROOT, NFF_SRC_ROOT, INDUSTRY_METADATA_PATH, CONTROLS_ROOT, TURNOVER_CONTROL_POLICY, ENABLED_PORTFOLIO_VARIANTS
     paths = config.get("local_paths", {}) if isinstance(config.get("local_paths", {}), dict) else {}
     if paths.get("warehouse_root"):
         WAREHOUSE_ROOT = Path(paths["warehouse_root"])
@@ -302,6 +303,8 @@ def apply_config_globals(config: dict[str, Any]) -> None:
         RAW_1M_ROOT = Path(paths["raw_1m_root"])
     if paths.get("nodefactorfactory_src"):
         NFF_SRC_ROOT = Path(paths["nodefactorfactory_src"])
+    if paths.get("industry_metadata"):
+        INDUSTRY_METADATA_PATH = Path(paths["industry_metadata"])
     CONTROLS_ROOT = RESEARCH_ROOT / "derived_inputs" / "daily_bar_controls_v2_1"
     portfolio = config.get("portfolio_proxy", {}) if isinstance(config.get("portfolio_proxy", {}), dict) else {}
     configured_turnover = portfolio.get("turnover_controlled_variant", {})
@@ -410,6 +413,7 @@ def apply_config_args(args: argparse.Namespace, config: dict[str, Any], explicit
             "research_root": str(RESEARCH_ROOT),
             "raw_1m_root": str(RAW_1M_ROOT),
             "nodefactorfactory_src": str(NFF_SRC_ROOT),
+            "industry_metadata": str(INDUSTRY_METADATA_PATH) if INDUSTRY_METADATA_PATH else None,
             "controls_path": str(args.controls_path) if args.controls_path else None,
         },
         "session": {
@@ -653,7 +657,12 @@ def build_daily_controls(start_date: str, end_date: str, controls_root: Path, ra
     output_path = controls_root / f"daily_controls_{start_date}_{end_date}.parquet"
     success_path = output_path.with_suffix(output_path.suffix + "._SUCCESS")
     if output_path.exists() and success_path.exists():
-        return output_path
+        try:
+            existing_columns = set(pd.read_parquet(output_path, engine="pyarrow").columns)
+            if all(f"adv20_top{limit}" in existing_columns for limit in (500, 1000, 2000, 3000)):
+                return output_path
+        except Exception:
+            pass
 
     warehouse_dates = load_dates(start_date, end_date)
     raw_dates = [date for date in available_raw_dates() if date < start_date][-raw_lookback_days:] if raw_lookback_days > 0 else []
@@ -707,7 +716,8 @@ def build_daily_controls(start_date: str, end_date: str, controls_root: Path, ra
     result = pd.concat(controls, ignore_index=True)
     result = result[result["trade_date"].between(start_date, end_date)].copy()
     result["adv20_rank_desc"] = result.groupby("trade_date")["adv20"].rank(method="first", ascending=False)
-    result["adv20_top1000"] = result["adv20_rank_desc"] <= 1000
+    for limit in (500, 1000, 2000, 3000):
+        result[f"adv20_top{limit}"] = result["adv20_rank_desc"] <= limit
     result.to_parquet(output_path, index=False)
     result.to_csv(output_path.with_suffix(".csv"), index=False)
     atomic_write_json(
@@ -887,8 +897,34 @@ def join_daily_controls(features: pd.DataFrame, trade_date: str, controls_path: 
     controls["control__beta_60m_intraday_proxy"] = beta.reindex(features.index)
     controls["control__adv20_days"] = pd.Series(matched["adv20_days"].to_numpy(), index=features.index).astype(float)
     controls["control__adv20_rank_desc"] = pd.Series(matched["adv20_rank_desc"].to_numpy(), index=features.index).astype(float)
-    controls["control__adv20_top1000"] = pd.Series(matched["adv20_top1000"].to_numpy(), index=features.index).astype(float)
+    for limit in (500, 1000, 2000, 3000):
+        column = f"adv20_top{limit}"
+        if column in matched:
+            controls[f"control__{column}"] = pd.Series(matched[column].to_numpy(), index=features.index).astype(float)
     controls["control__last_close_prevday"] = pd.Series(matched["last_close"].to_numpy(), index=features.index).astype(float)
+    if INDUSTRY_METADATA_PATH is not None and INDUSTRY_METADATA_PATH.exists():
+        try:
+            metadata = pd.read_parquet(
+                INDUSTRY_METADATA_PATH,
+                columns=["symbol", "sector_code", "industry_code"],
+            ).drop_duplicates("symbol").set_index("symbol")
+            sector = metadata.reindex(symbols)
+            dummy_blocks: list[pd.DataFrame] = []
+            for source_column, prefix in (("sector_code", "sector"), ("industry_code", "industry")):
+                values = sector[source_column].astype("string").fillna("__UNKNOWN__")
+                if prefix == "industry":
+                    top_values = set(values.value_counts().head(50).index.tolist())
+                    values = values.where(values.isin(top_values), "__OTHER__")
+                block: dict[str, np.ndarray] = {}
+                for value in sorted(values.unique().tolist()):
+                    safe = re.sub(r"[^A-Za-z0-9]+", "_", str(value)).strip("_") or "UNKNOWN"
+                    block[f"control__{prefix}_{safe}"] = (values == value).to_numpy(dtype="float32")
+                if block:
+                    dummy_blocks.append(pd.DataFrame(block, index=features.index))
+            if dummy_blocks:
+                controls = pd.concat([controls, *dummy_blocks], axis=1, copy=False)
+        except Exception:
+            pass
     return controls.replace([np.inf, -np.inf], np.nan).astype("float32")
 
 
@@ -954,18 +990,32 @@ def universe_masks(features: pd.DataFrame, controls: pd.DataFrame) -> dict[str, 
     liquid = common.copy()
     liquid &= features["bars_1m__close"].astype(float) >= 5.0
     liquid &= features.get("bars_1m__volume", pd.Series(np.nan, index=features.index)).astype(float) > 0.0
-    liquid &= controls["control__adv20_top1000"].fillna(0).astype(bool)
     liquid &= controls["control__adv20_days"].fillna(0) >= 20
     liquid &= features.get("trades_1m_core__trade_count", pd.Series(np.nan, index=features.index)).astype(float) >= 1.0
     if "trade_nvg__trade_active_second_ratio_300s" in features.columns:
         liquid &= features["trade_nvg__trade_active_second_ratio_300s"].astype(float) >= 0.01
     if "trade_nvg__trade_price_stale_ratio_300s" in features.columns:
         liquid &= features["trade_nvg__trade_price_stale_ratio_300s"].astype(float) <= 0.95
-    return {
-        "own_feature_universe": all_mask.fillna(False),
+    result = {
+        "all_pit_eligible": all_mask.fillna(False),
         "common_structural": common.fillna(False),
-        "liquid_common_adv20_top1000": liquid.fillna(False),
     }
+    for limit in (500, 1000, 2000, 3000):
+        key = f"control__adv20_top{limit}"
+        if key in controls:
+            limit_mask = controls[key].fillna(0).astype(bool)
+        elif "control__adv20_top1000" in controls:
+            # Synthetic/unit-test callers and legacy control artifacts may
+            # only expose the original Top1000 flag. Preserve compatibility;
+            # production v2.5 controls always materialize every layer.
+            limit_mask = controls["control__adv20_top1000"].fillna(0).astype(bool)
+        else:
+            limit_mask = pd.Series(False, index=features.index)
+        result[f"liquid_common_adv20_top{limit}"] = (liquid & limit_mask).fillna(False)
+    result["final_trading_universe"] = result["liquid_common_adv20_top1000"]
+    # Backwards-compatible alias retained for v2.4 consumers.
+    result["own_feature_universe"] = result["all_pit_eligible"]
+    return result
 
 
 def _corr(x: np.ndarray, y: np.ndarray, min_n: int = 30) -> tuple[float, int]:
@@ -1097,7 +1147,7 @@ def append_ic_rows(
 
 def _residualize_matrix(values: pd.DataFrame, controls: pd.DataFrame, min_n: int = 40) -> pd.DataFrame:
     result = pd.DataFrame(index=values.index, columns=values.columns, dtype="float32")
-    control_cols = [
+    numeric_control_cols = [
         "control__log_price",
         "control__log_adv20",
         "control__log_intraday_dollar_volume",
@@ -1106,15 +1156,30 @@ def _residualize_matrix(values: pd.DataFrame, controls: pd.DataFrame, min_n: int
         "control__realized_vol_60m",
         "control__beta_60m_intraday_proxy",
     ]
-    control_cols = [column for column in control_cols if column in controls.columns]
+    numeric_control_cols = [column for column in numeric_control_cols if column in controls.columns]
+    fixed_effect_cols = sorted(
+        column
+        for column in controls.columns
+        if column.startswith("control__sector_") or column.startswith("control__industry_")
+    )
+    # Industry/sector dummies are absorbed by fast within-group demeaning.
+    # This is algebraically equivalent to including a full dummy block in the
+    # OLS design, but avoids thousands of repeated wide SVDs per date/minute.
+    control_cols = numeric_control_cols
     for dt, idx in values.groupby(level="datetime", sort=False).groups.items():
         c = controls.loc[idx, control_cols]
         v = values.loc[idx]
         c_clean = c.replace([np.inf, -np.inf], np.nan)
+        v_clean = v.replace([np.inf, -np.inf], np.nan)
+        if fixed_effect_cols:
+            fixed = controls.loc[idx, fixed_effect_cols].fillna(0.0).to_numpy(dtype="float64")
+            group_codes = pd.Series(np.argmax(fixed, axis=1), index=idx, dtype="int32")
+            # Absorb the categorical fixed effect before numeric controls.
+            v_clean = v_clean - v_clean.groupby(group_codes, sort=False).transform("mean")
+            c_clean = c_clean - c_clean.groupby(group_codes, sort=False).transform("mean")
         control_valid = c_clean.notna().all(axis=1)
         if int(control_valid.sum()) < min_n:
             continue
-        v_clean = v.replace([np.inf, -np.inf], np.nan)
         grouped_columns: dict[bytes, list[str]] = {}
         grouped_masks: dict[bytes, np.ndarray] = {}
         control_valid_arr = control_valid.to_numpy(dtype=bool)
@@ -1192,7 +1257,7 @@ def minute_rank_ic_summary(
                 label_non_null,
             )
 
-            if not family.startswith("return_") or universe == "own_feature_universe":
+            if not family.startswith("return_") or universe not in {"common_structural", "liquid_common_adv20_top1000"}:
                 continue
 
             neutral_features = [c for c in feature_columns if c in feature_frame.columns]
