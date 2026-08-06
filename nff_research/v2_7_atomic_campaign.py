@@ -682,6 +682,29 @@ def _merge_venue_exact(frame: pd.DataFrame, warehouse_root: Path) -> pd.DataFram
 
 
 def _add_all_features(frame: pd.DataFrame) -> pd.DataFrame:
+    _event(
+        "feature_input",
+        "running",
+        rows=int(len(frame)),
+        index_names=list(frame.index.names),
+        close_non_null=int(
+            pd.to_numeric(frame.get("bars_1m__close", pd.Series(dtype="float64")), errors="coerce")
+            .notna()
+            .sum()
+        ),
+    )
+    frame = V26._ensure_research_index(frame)
+    _event(
+        "feature_input",
+        "canonicalized",
+        rows=int(len(frame)),
+        index_names=list(frame.index.names),
+        close_non_null=int(
+            pd.to_numeric(frame.get("bars_1m__close", pd.Series(dtype="float64")), errors="coerce")
+            .notna()
+            .sum()
+        ),
+    )
     frame = _timed("merge_supplements", FF.merge_supplements, frame, R.WAREHOUSE_ROOT)
     frame = _timed("merge_sketch", FF.merge_canonical_sketch, frame, R.WAREHOUSE_ROOT)
     frame = _timed("merge_condition", FF.merge_condition_aggregates, frame, R.WAREHOUSE_ROOT)
@@ -731,7 +754,20 @@ def _add_all_features(frame: pd.DataFrame) -> pd.DataFrame:
     result = frame[keep].select_dtypes(include=[np.number]).replace(
         [np.inf, -np.inf], np.nan
     ).astype("float32")
-    return V26._ensure_research_index(result)
+    result = V26._ensure_research_index(result)
+    _event(
+        "feature_output",
+        "complete",
+        rows=int(len(result)),
+        index_names=list(result.index.names),
+        close_non_null=int(
+            pd.to_numeric(result.get("bars_1m__close", pd.Series(dtype="float64")), errors="coerce")
+            .notna()
+            .sum()
+        ),
+        columns=int(result.shape[1]),
+    )
+    return result
 
 
 def _future_exact_cached(frame: pd.DataFrame, column: str, offset_minutes: int) -> pd.Series:
@@ -936,6 +972,17 @@ def _install_context(config: Mapping[str, Any]) -> None:
     # profiling wrapper captures the pre-v2.6 label/selector functions and
     # can otherwise silently route workers back to the legacy path.
     original = V26.FAST._ORIGINALS.get("run_date", R.run_date)
+    original_globals = getattr(original, "__globals__", {})
+    # The optimized runner stores the pre-patch run_date function and its
+    # module globals separately. Updating only R.<name> is insufficient when
+    # that captured function belongs to a legacy module dictionary.
+    original_globals.update(
+        {
+            "add_all_features": _add_all_features,
+            "build_labels_and_masks": V26._full_build_labels_and_masks,
+            "analysis_features": V26._full_analysis_features,
+        }
+    )
     atomic = config.get("atomic", {}) if isinstance(config.get("atomic"), Mapping) else {}
     factor_block_size = int(atomic.get("factor_block_size", 8))
     intra_workers = int(atomic.get("intra_date_workers", 8))
