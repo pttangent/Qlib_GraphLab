@@ -780,6 +780,113 @@ def _future_exact_cached(frame: pd.DataFrame, column: str, offset_minutes: int) 
     return value
 
 
+def _ranked_ic_stats_vectorized(
+    feature_frame: pd.DataFrame,
+    label: pd.Series,
+    feature_columns: list[str],
+    min_n: int,
+) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]]]:
+    """Compute the reference IC statistics with matrix-level accumulators.
+
+    The v2.4 fast path called a Python/NumPy correlation helper once per
+    feature per minute. That preserved the formula but made the full A-K
+    screen spend most of its time in millions of tiny ``isfinite`` calls.
+    This implementation keeps the same average-rank and demeaned-percentile
+    rank contracts while accumulating all feature columns in one vectorized
+    pass per minute.
+    """
+    feature_count = len(feature_columns)
+    minute_values: list[list[float]] = [[] for _ in feature_columns]
+    minute_counts = np.zeros(feature_count, dtype="int64")
+    pooled_n = np.zeros(feature_count, dtype="float64")
+    pooled_sx = np.zeros(feature_count, dtype="float64")
+    pooled_sy = np.zeros(feature_count, dtype="float64")
+    pooled_sxx = np.zeros(feature_count, dtype="float64")
+    pooled_syy = np.zeros(feature_count, dtype="float64")
+    pooled_sxy = np.zeros(feature_count, dtype="float64")
+    admitted_minutes = 0
+    work = pd.concat([feature_frame[feature_columns], label.rename("__label")], axis=1)
+
+    for _, block in work.groupby(level="datetime", sort=False):
+        ranked_y_raw = block["__label"].rank(method="average")
+        y_raw = ranked_y_raw.to_numpy(dtype="float64")
+        y_valid = np.isfinite(y_raw)
+        if int(y_valid.sum()) < min_n:
+            continue
+        admitted_minutes += 1
+
+        ranked_x_raw = block[feature_columns].rank(method="average")
+        x_raw = ranked_x_raw.to_numpy(dtype="float64", copy=False)
+        valid = np.isfinite(x_raw) & y_valid[:, None]
+        n = valid.sum(axis=0).astype("float64")
+        x0 = np.where(valid, x_raw, 0.0)
+        y0 = np.where(valid, y_raw[:, None], 0.0)
+        sx = x0.sum(axis=0, dtype="float64")
+        sy = y0.sum(axis=0, dtype="float64")
+        sxx = (x0 * x0).sum(axis=0, dtype="float64")
+        syy = (y0 * y0).sum(axis=0, dtype="float64")
+        sxy = (x0 * y0).sum(axis=0, dtype="float64")
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cov = sxy - sx * sy / n
+            vx = sxx - sx * sx / n
+            vy = syy - sy * sy / n
+            corr = cov / np.sqrt(np.maximum(vx, 0.0) * np.maximum(vy, 0.0))
+        eligible = (n >= min_n) & np.isfinite(corr)
+        minute_counts += n.astype("int64")
+        for idx in np.flatnonzero(eligible):
+            minute_values[idx].append(float(corr[idx]))
+
+        label_count = int(y_valid.sum())
+        y_pooled = y_raw / float(label_count)
+        y_pooled[~y_valid] = np.nan
+        y_pooled -= np.nanmean(y_pooled)
+        feature_counts = np.isfinite(x_raw).sum(axis=0).astype("float64")
+        x_pooled = x_raw / feature_counts[None, :]
+        feature_means = np.divide(
+            np.nansum(x_pooled, axis=0),
+            feature_counts,
+            out=np.full(feature_count, np.nan, dtype="float64"),
+            where=feature_counts > 0,
+        )
+        x_pooled -= feature_means[None, :]
+        xp0 = np.where(valid, x_pooled, 0.0)
+        yp0 = np.where(valid, y_pooled[:, None], 0.0)
+        pooled_n += n
+        pooled_sx += xp0.sum(axis=0, dtype="float64")
+        pooled_sy += yp0.sum(axis=0, dtype="float64")
+        pooled_sxx += (xp0 * xp0).sum(axis=0, dtype="float64")
+        pooled_syy += (yp0 * yp0).sum(axis=0, dtype="float64")
+        pooled_sxy += (xp0 * yp0).sum(axis=0, dtype="float64")
+
+    minute_out: dict[str, dict[str, float]] = {}
+    pooled_out: dict[str, dict[str, float]] = {}
+    with np.errstate(divide="ignore", invalid="ignore"):
+        pooled_cov = pooled_sxy - pooled_sx * pooled_sy / pooled_n
+        pooled_vx = pooled_sxx - pooled_sx * pooled_sx / pooled_n
+        pooled_vy = pooled_syy - pooled_sy * pooled_sy / pooled_n
+        pooled_corr = pooled_cov / np.sqrt(
+            np.maximum(pooled_vx, 0.0) * np.maximum(pooled_vy, 0.0)
+        )
+    for idx, feature in enumerate(feature_columns):
+        values = np.asarray(minute_values[idx], dtype="float64")
+        value = float(pooled_corr[idx]) if pooled_n[idx] >= min_n and np.isfinite(pooled_corr[idx]) else math.nan
+        minute_out[feature] = {
+            "ic_minutes": int(values.size),
+            "ic_count": int(minute_counts[idx]),
+            "rank_ic_mean": float(values.mean()) if values.size else math.nan,
+            "rank_ic_std": float(values.std(ddof=1)) if values.size > 1 else math.nan,
+            "rank_ic_positive_ratio": float((values > 0).mean()) if values.size else math.nan,
+        }
+        pooled_out[feature] = {
+            "ic_minutes": admitted_minutes,
+            "ic_count": int(pooled_n[idx]),
+            "rank_ic_mean": value,
+            "rank_ic_std": math.nan,
+            "rank_ic_positive_ratio": float(value > 0) if np.isfinite(value) else math.nan,
+        }
+    return minute_out, pooled_out
+
+
 def _stage_cache(name: str, function: Callable[..., pd.DataFrame]) -> Callable[..., pd.DataFrame]:
     def wrapped(*args: Any, **kwargs: Any) -> pd.DataFrame:
         path = None if CTX is None else CTX.root / "stages" / f"{name}.parquet"
@@ -1070,6 +1177,10 @@ def install(config: Mapping[str, Any]) -> None:
     FF.derive_prototype = _derive_corrected
     FF.derive_all = _derive_all_checkpointed
     V26._future_exact = _future_exact_cached
+    # The v2.4 summary function resolves ranked_ic_stats_once in its own
+    # module globals, so replace that hot helper explicitly after the fast
+    # path has been installed.
+    V26.FAST.ranked_ic_stats_once = _ranked_ic_stats_vectorized
     R.add_all_features = _add_all_features
     original_join_controls = R.join_daily_controls
 

@@ -7,6 +7,7 @@ from nff_research import v2_7_launch as LAUNCH
 from nff_research import full_factor_engine as FF
 from nff_research import v2_6_full_defined_campaign as FULL
 from nff_research import v2_7_atomic_campaign as ATOMIC
+from nff_research import v2_4_optimized_runner as V24
 
 
 def _cross_section(values: dict[str, list[float]]) -> pd.DataFrame:
@@ -17,6 +18,34 @@ def _cross_section(values: dict[str, list[float]]) -> pd.DataFrame:
         names=["instrument", "datetime"],
     )
     return pd.DataFrame(values, index=index)
+
+
+def test_vectorized_ranked_ic_matches_reference_statistics() -> None:
+    times = pd.date_range("2026-01-02 15:00:00", periods=4, freq="1min", tz="UTC")
+    index = pd.MultiIndex.from_product(
+        [["AAA", "BBB", "CCC", "DDD"], times], names=["instrument", "datetime"]
+    )
+    frame = pd.DataFrame(
+        {
+            "x": np.arange(len(index), dtype="float64"),
+            "z": np.linspace(1.0, 4.0, len(index)),
+        },
+        index=index,
+    )
+    frame.iloc[2, 0] = np.nan
+    label = pd.Series(np.sin(np.arange(len(index))), index=index, name="label")
+    reference = V24.ranked_ic_stats_once(frame, label, ["x", "z"], min_n=2)
+    optimized = ATOMIC._ranked_ic_stats_vectorized(frame, label, ["x", "z"], min_n=2)
+    for feature in ("x", "z"):
+        for key in ("ic_minutes", "ic_count", "rank_ic_mean", "rank_ic_std", "rank_ic_positive_ratio"):
+            assert np.isclose(
+                reference[0][feature][key], optimized[0][feature][key], equal_nan=True
+            )
+        assert np.isclose(
+            reference[1][feature]["rank_ic_mean"],
+            optimized[1][feature]["rank_ic_mean"],
+            equal_nan=True,
+        )
 
 
 def test_full_label_builder_normalizes_timestamp_index_alias() -> None:
