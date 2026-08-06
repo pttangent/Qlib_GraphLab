@@ -233,6 +233,10 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
                     if pd.api.types.is_datetime64_any_dtype(index.get_level_values(position)):
                         return position
                 return 1
+            if named_candidates:
+                # The named level is only a provisional entry point.  The
+                # row-wise content repair below will validate or rebuild it.
+                return min(named_candidates)
             raise KeyError(f"cannot identify datetime level from index names={names!r}")
         return best_position
 
@@ -274,6 +278,41 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
         swapped_rate = float(swapped_datetime.notna().mean()) if len(swapped_datetime) else 0.0
         if swapped_rate >= 0.9:
             normalized.index = swapped_index
+            return normalized
+        # A wider concat can mix both tuple orientations row by row:
+        # (datetime, instrument) and (instrument, datetime).  Level
+        # reordering cannot repair that case, so classify each row by which
+        # value is a plausible timestamp and rebuild the canonical index.
+        raw0 = normalized.index.get_level_values(0)
+        raw1 = normalized.index.get_level_values(1)
+        parsed0 = pd.to_datetime(raw0, utc=True, errors="coerce")
+        parsed1 = pd.to_datetime(raw1, utc=True, errors="coerce")
+        plausible0 = (
+            parsed0.notna()
+            & (parsed0 >= pd.Timestamp("2015-01-01", tz="UTC"))
+            & (parsed0 < pd.Timestamp("2035-01-01", tz="UTC"))
+        )
+        plausible1 = (
+            parsed1.notna()
+            & (parsed1 >= pd.Timestamp("2015-01-01", tz="UTC"))
+            & (parsed1 < pd.Timestamp("2035-01-01", tz="UTC"))
+        )
+        row_dt0 = plausible0 & ~plausible1
+        row_dt1 = plausible1 & ~plausible0
+        row_valid = row_dt0 | row_dt1
+        if float(row_valid.mean()) >= 0.9:
+            times = pd.Series(
+                pd.NaT,
+                index=np.arange(len(normalized)),
+                dtype="datetime64[ns, UTC]",
+            )
+            times.loc[row_dt0] = parsed0[row_dt0]
+            times.loc[row_dt1] = parsed1[row_dt1]
+            symbols = np.where(row_dt0, raw1, raw0)
+            normalized.index = pd.MultiIndex.from_arrays(
+                [symbols, times.to_numpy()],
+                names=canonical_names,
+            )
             return normalized
     if parse_rate < 0.9:
         samples = [

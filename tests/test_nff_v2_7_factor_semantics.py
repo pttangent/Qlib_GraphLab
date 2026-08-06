@@ -84,6 +84,18 @@ def test_full_label_builder_corrects_swapped_level_names() -> None:
     assert normalized.index.get_level_values("datetime")[0] == pd.Timestamp("2026-01-02 15:00:00", tz="UTC")
 
 
+def test_full_label_builder_repairs_rowwise_mixed_index_orientation() -> None:
+    timestamp = pd.Timestamp("2026-01-02 15:00:00", tz="UTC")
+    index = pd.MultiIndex.from_arrays(
+        [[timestamp, "BBB", timestamp, "DDD"], ["AAA", timestamp, "CCC", timestamp]],
+        names=["instrument", "datetime"],
+    )
+    normalized = FULL._ensure_research_index(pd.DataFrame({"x": 1.0}, index=index))
+    assert normalized.index.names == ["instrument", "datetime"]
+    assert normalized.index.get_level_values("instrument").tolist() == ["AAA", "BBB", "CCC", "DDD"]
+    assert normalized.index.get_level_values("datetime").tolist() == [timestamp] * 4
+
+
 def test_full_label_builder_uses_plausible_dates_for_numeric_swapped_levels() -> None:
     times = pd.date_range("2026-01-02 14:30:00", periods=5000, freq="min", tz="UTC")
     # Numeric instrument ids can parse as Unix nanoseconds; plausibility must
