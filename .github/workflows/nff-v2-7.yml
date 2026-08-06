@@ -18,7 +18,7 @@ on:
 jobs:
   targeted-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       PYTHONPATH: ${{ github.workspace }}
     steps:
@@ -26,10 +26,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install targeted dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install numpy pandas pyarrow pyyaml pytest psutil
+          cache: pip
+      - name: Install Qlib and test dependencies
+        run: python -m pip install -e ".[dev]"
       - name: Syntax check v2.7 modules
         run: |
           python -m py_compile \
