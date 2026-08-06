@@ -964,6 +964,12 @@ def _install_context(config: Mapping[str, Any]) -> None:
             _event("date", "failed", error=repr(exc))
             raise
         finally:
+            audit_dir = out_root / "02_neutralized_factor_diagnostics" / f"date={trade_date}"
+            audit_dir.mkdir(parents=True, exist_ok=True)
+            (audit_dir / "label_index_audit.json").write_text(
+                json.dumps(V26.LAST_LABEL_AUDIT, indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
             FUTURE_CACHE.clear()
             CTX = None
 
