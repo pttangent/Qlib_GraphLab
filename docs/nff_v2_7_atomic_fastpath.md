@@ -1,63 +1,123 @@
-# NFF v2.7 real-schema atomic fast path
+# NFF v2.7 warehouse-exact atomic fast path
 
 ## Purpose
 
-This branch optimizes the full-defined NFF minute-factor campaign without
-changing the research questions. The rebuilt `nvg_supplement` is a first-class
-input. Every date audits the actual Parquet schema before derivation; missing
-fields are recorded and are never silently replaced by similarly named fields.
+This branch optimizes the full-defined NFF minute-factor campaign while making
+the research contract match the physical warehouse. The rebuilt
+`nvg_supplement` is a first-class input. Every date audits the actual Parquet
+schema, field resolution, physical join, factor coverage and checkpoint
+contract before a date can complete.
 
 Authoritative upstream source:
 
 - Repository: `pttangent/NodeFactorFactory`
 - Branch: `agent/nvg-trade-hawkes-families`
-- Warehouse supplement namespace: `nvg_supplement/*/schema=v1/date=YYYY-MM-DD`
+- Warehouse root: `D:/DEV/AnotherNetworkFactory/warehouses/NFF_warehouse`
+- Supplement namespace: `nvg_supplement/*/schema=v1/date=YYYY-MM-DD`
+
+## Physical windows and formal contract
+
+The 2026-08-06 warehouse inventory defines these physical products:
+
+| Layer | Physical windows |
+|---|---|
+| base minute NVG/path | `10m / 15m / 30m` |
+| minute NVG edge supplement | `10m / 15m / 30m` |
+| minute NVG topology supplement | `10m / 15m / 30m` |
+| minute HVG risk/topology | `15m / 30m / 60m` |
+| trade visibility | `60s / 180s / 300s` |
+| formal S directional factors | `15m / 30m` |
+
+The historical instruction expands to **474 A–K specifications plus two S
+specifications = 476 formal specifications**. The physical warehouse supports
+**462 A–K specifications plus two S factors = 464 executable specifications**.
+The difference is exactly the twelve `C@60m` price-NVG-topology
+specifications. No 60m price-NVG topology product exists, so those twelve rows
+are retained in `legacy_contract_gap` and are never filled by renaming 30m data
+or substituting 60m HVG risk fields.
+
+The production model, IC, decile and ablation stages consume only the 464
+warehouse-exact specifications. The 476-row registry remains available for
+legacy instruction reconciliation.
 
 ## Directional NVG source
 
-The preferred direction fields come from
-`nvg_supplement/minute_nvg_edge_raw`, including, per available minute window:
+Terminal direction comes from `nvg_supplement/minute_nvg_edge_raw` and
+`trade_visibility_edge_raw`:
 
-- `price_nvg_{W}m_terminal_signed_edge_balance`
-- `price_nvg_{W}m_terminal_long_edge_signed_slope`
-- `price_detrended_nvg_{W}m_terminal_signed_edge_balance`
-- `price_detrended_nvg_{W}m_terminal_long_edge_signed_slope`
-- `volume_nvg_{W}m_terminal_signed_edge_balance`
-- `volume_nvg_{W}m_terminal_long_edge_signed_slope`
-- `price_volume_nvg_{W}m_edge_weighted_jaccard`
-- `price_volume_nvg_{W}m_common_edge_slope_corr`
+- `*_terminal_signed_edge_balance`;
+- `*_terminal_long_edge_signed_slope`;
+- raw and detrended price direction;
+- volume direction;
+- price/volume edge-weighted Jaccard and common-edge slope correlation.
 
-The runtime schema, not this documentation, determines which windows and
-columns are executable for a date. Base `minute_nvg` top/bottom geometry remains
-available for geometric factors, but it is not substituted for a missing rebuilt
-directional field.
+Base top/bottom geometry remains available for geometric factors, but
+`top_bottom_asymmetry` and unsigned `long_edge_ratio` are not substitutes for a
+missing terminal direction field.
+
+The formal S family contains only:
+
+```text
+full_factor__s01__w15m
+full_factor__s01__w30m
+```
+
+The raw 10m direction fields remain available for A–K dependencies and audit;
+they do not create an unregistered S10 model input.
+
+## Physical join and PIT clock
+
+The primary adapter aligns canonical and feature sources on
+`(symbol_id, timestamp)`. v2.7 preserves the exact `symbol_id` and original
+`event_time` as temporary research metadata, then joins supplement rows on
+`(symbol_id, event_time)`.
+
+A supplement value is admitted only when:
+
+```text
+ceil(supplement.available_time, 1 minute) + 1 minute <= decision_time
+```
+
+A matched row that becomes available later is set to missing at the current
+decision row; it is not silently shifted or backfilled. Production runs fail
+if the exact metadata is unavailable. Each date writes
+`supplement_join_audit.{parquet,csv,json}` with matched, admissible, late,
+duplicate and fallback counts.
 
 ## Runtime resolution audit
 
-Every date writes:
+Every date writes under:
 
 ```text
 atomic_checkpoints/date=YYYY-MM-DD/schema/
-  nff_schema_audit.parquet
-  nff_schema_audit.csv
-  field_resolution.parquet
-  field_resolution.csv
-  factor_resolution.parquet
-  factor_resolution.csv
-  factor_resolution_summary.json
 ```
 
-`field_resolution` records each requested name, the exact base/supplement field
-or documented alias used, call count and non-null rate. `factor_resolution`
-records every formal factor specification, formula, window, materialized column,
-non-null rate and failure state. Therefore a campaign cannot report “476
-factors” without showing which specifications actually computed.
+including:
 
-## Causal path reconstruction
+```text
+nff_schema_audit.parquet
+field_resolution.parquet
+factor_resolution.parquet
+factor_resolution_summary.json
+physical_factor_completion_gate.json
+legacy_contract_gap.parquet
+legacy_contract_gap.json
+supplement_join_audit.parquet
+supplement_join_audit.json
+```
 
-Some financial prototypes require path metrics that are mathematically defined
-from canonical minute bars but are not necessarily persisted by the older NFF
-family. v2.7 reconstructs them causally per symbol and window:
+`field_resolution` records each requested field and the exact physical column
+or documented mathematical reconstruction used. `factor_resolution` records
+formula, window, source fields, materialized column, non-null rate and failure
+state. The physical completion gate requires all 464 executable specifications
+to be present and non-zero-coverage; the twelve legacy-only C@60m rows are
+reported separately and do not count as an execution failure.
+
+## Causal reconstruction
+
+Path fields already published in `features/minute_nvg` remain the preferred
+source. When a mathematically identical minute-bar path dependency is absent,
+v2.7 can reconstruct it causally per symbol and window:
 
 ```text
 signed_change     = x_t - x_(t-W+1)
@@ -68,62 +128,57 @@ range             = rolling_max(x) - rolling_min(x)
 terminal_position = (x_t - rolling_min(x)) / (range + eps)
 ```
 
-Price paths use log close; volume paths use `log1p(dollar_volume)`. No future
-minute is used.
+Price paths use log close; volume paths use `log1p(dollar_volume)`. Event-time
+trade paths are not reconstructed from one-minute aggregates when the original
+event sequence is required.
 
 ## Mathematical corrections
 
-The v2.7 patch fixes the following definitions:
+The final formula chain includes:
 
-1. `C08`: new-hub direction uses the sign of the **change** in asymmetry,
-   multiplied by hub-replacement strength.
-2. `F03`: stale-to-active transition uses per-symbol positive decreases in
-   stale ratio times per-symbol positive increases in activity.
-3. `G09`: irreversibility exhaustion uses the decline from the five-minute
-   lagged value and points against the existing momentum direction.
-4. `H23`: effective duration uses the effective-duration field rather than
-   persistence.
-5. `I06`: large-trade direction equals large-buy/sell imbalance multiplied by
-   large-trade dollar share.
-6. Venue HHI and entropy use actual venue volume shares rather than `1/N` and
-   `log(N)` proxies.
-7. Decile boundaries are vectorized but remain equivalent to `qcut` applied to
-   unique within-minute ranks.
-8. Account replay interprets model output as expected future return: high
-   predictions are long and low predictions are short.
+1. `A14–A16`: multi-scale momentum uses physical `10m/15m/30m`.
+2. `B04`: long-horizon direction uses terminal long-edge signed slope, not an
+   unsigned long-edge ratio.
+3. `C08`: new-hub direction uses the sign of the change in asymmetry multiplied
+   by hub-replacement strength.
+4. `D04`: abnormal volume expansion is a causal within-symbol time-series
+   z-score.
+5. `E01–E22`: direction-sensitive trade formulas use exact terminal signed
+   direction fields; E20/E21 do not fall back to top/bottom asymmetry.
+6. `F03`: stale-to-active transition uses per-symbol positive stale decreases
+   and activity increases.
+7. `G09`: irreversibility exhaustion points against existing momentum when
+   irreversibility declines from its five-minute lag.
+8. `H23`: effective duration uses the duration field, not persistence.
+9. `I06`: large-trade direction is large-buy/sell imbalance times large-trade
+   dollar share.
+10. K minute-price/topology anchors remain the documented physical 10m anchor;
+    trade/Hawkes anchors retain their specified horizons.
+11. Venue HHI and entropy use actual venue volume shares.
+12. Account replay is high-prediction long and low-prediction short.
 
 ## Exact-minute labels
 
-The v2.6 exact-time formula remains authoritative. v2.7 caches each
-`(daily frame, source column, future offset)` lookup, so all horizons reuse the
-same exact-time result instead of repeating the same reindex/join.
-
-Entry is the exact next minute (`t+1`) and exit is `t+h+1`. Missing intermediate
-minutes invalidate future-window labels rather than stretching the holding
-period over the next available row.
+Entry is the exact next minute (`t+1`) and exit is `t+h+1`. Missing required
+minutes invalidate the label rather than stretching the holding period over the
+next observed row. Exact future lookups are cached by source column and offset;
+the cache changes performance, not label semantics.
 
 ## Atomic checkpoints
 
-Checkpoints are stored under:
+The hierarchy includes:
 
 ```text
-<run>/atomic_checkpoints/date=YYYY-MM-DD/
-```
-
-The hierarchy is:
-
-```text
-schema/
 factors/family=<A-K>/window=<window>/block=<NNN>.parquet
+deciles/universe=<...>/label=<...>/variant=<...>/block=<NNN>.parquet
 neutralization/residual=<contract>.parquet
 stages/decile_curves.parquet
-stages/portfolio_proxy.parquet
 stage_events.jsonl
 ```
 
-A factor-window manifest includes the run contract, instruction hash, index
-hash, factor IDs, formulas and block files. An interrupted run reuses only
-blocks whose complete contract matches.
+Factor and decile blocks include the run contract, instruction hash, index
+hash, formula/version information and an upstream Parquet fingerprint. If a
+base or supplement Parquet file changes, stale blocks are not reused.
 
 ## Parallel architecture
 
@@ -133,27 +188,9 @@ The default half-year configuration uses:
 2 date processes × 8 intra-date shared-memory workers ≈ 16 CPU slots
 ```
 
-A date process retains a wide symbol-minute frame. Starting 16 date processes
-would duplicate that frame and can multiply an 8–27 GB peak into an unsafe
-memory demand. Intra-date threads share the daily frame and parallelize
-decile/factor work without that duplication.
-
-The outer scheduler may increase to three dates only when its RSS and available
-memory guards allow it.
-
-## Main performance changes
-
-- factor families are derived once per `(family, window)` and written in small
-  reusable blocks;
-- exact future-minute values are cached by source/offset;
-- residualized factor matrices are checkpointed by contract;
-- deciles use grouped unique ranks and NumPy `bincount` aggregation instead of a
-  Python loop over every minute-factor-decile cell;
-- only Alpha outputs plus the small universe/control set remain in the main
-  frame after derivation;
-- train-only redundancy filtering uses IC preselection, a deterministic bounded
-  sample and one correlation matrix;
-- stage timing and state transitions are written continuously.
+Outer date processes own wide daily frames; intra-date threads share a daily
+frame. The scheduler may increase to three dates only when RSS and available
+memory guards permit it.
 
 ## Walk-forward models
 
@@ -166,11 +203,10 @@ The chronological train/validation/test loop supports:
 - LightGBM when installed;
 - a real PyTorch GRU when installed.
 
-Feature coverage, direction, redundancy filtering, model parameters and the
-primary model are chosen using train/validation only. Missing optional packages
-produce `MODEL_UNAVAILABLE`; they are not silently replaced. Ridge family
-ablation removes each A–K/S family before feature selection and retrains the
-model on the same chronological fold.
+Feature coverage, direction, redundancy filtering, model parameters and primary
+model selection use train/validation only. Optional unavailable packages are
+recorded as `MODEL_UNAVAILABLE`. A–K/S family ablation removes a family before
+feature selection and retrains on the same chronological fold.
 
 ## Running
 
@@ -179,24 +215,28 @@ python nff_research/v2_7_launch.py `
   --config configs/v2_7_atomic_full_campaign.yaml
 ```
 
-Use a new run ID when changing factor formulas, source schemas, labels,
-neutralization, costs, universes or walk-forward settings. Worker/dashboard
-settings do not change the semantic contract unless they alter numerical
-results.
+The current configuration uses run name:
+
+```text
+v2_7_atomic_full_defined_20260806_r2
+```
+
+Use a new run ID after changing formulas, physical schemas, labels,
+neutralization, universes, costs or walk-forward settings.
 
 ## Validation requirement
 
-Before the half-year run, execute one full date and inspect:
+Before the half-year campaign:
 
-- `nff_schema_audit.csv` has zero required directional-field omissions for the
-  intended windows;
-- `factor_resolution_summary.json` shows the expected successful factor count
-  and explains every unavailable specification;
-- factor-block manifests are reusable after a forced process interruption;
-- v2.7 and v2.6 exact labels match on complete-minute samples;
-- vectorized and reference deciles match within floating-point tolerance;
-- peak RSS remains compatible with the selected outer date parallelism.
+1. run one complete date against the local warehouse;
+2. verify `physical_factor_completion_gate.json` reports 464 successful
+   executable specifications;
+3. verify `legacy_contract_gap.json` contains exactly twelve C@60m rows;
+4. verify the supplement join has no duplicate keys or symbol fallback;
+5. interrupt and resume after at least one factor and decile block;
+6. compare exact labels and vectorized deciles with their reference paths;
+7. inspect peak RSS and elapsed time.
 
-A smoke run is not a completed research campaign. Temporal OOS, Recorder,
-orders, fills, positions, account equity, family ablation and capacity outputs
-must still pass the campaign completion contract.
+A CI pass or smoke run is not a completed half-year research campaign. The PR
+remains draft until the real one-date benchmark and interrupted-resume test are
+run on the local warehouse.
