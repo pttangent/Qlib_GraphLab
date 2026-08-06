@@ -947,6 +947,13 @@ def _install_context(config: Mapping[str, Any]) -> None:
         write_schema_audit(R.WAREHOUSE_ROOT, CTX.root / "schema", trade_date)
         _event("date", "running", factor_block_size=factor_block_size, intra_workers=intra_workers)
         try:
+            # Rebind the live module entry points immediately before the date
+            # call.  The legacy optimized runner captures wrappers at import
+            # time; without this guard a worker can silently use the old
+            # observed-row labels and representative selector.
+            R.add_all_features = _add_all_features
+            R.build_labels_and_masks = V26._full_build_labels_and_masks
+            R.analysis_features = V26._full_analysis_features
             result = original(*args, **kwargs)
             _event("date", "complete", status=result.get("status"))
             return result
