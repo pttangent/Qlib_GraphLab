@@ -134,7 +134,14 @@ def _full_add_all_features(frame: pd.DataFrame) -> pd.DataFrame:
     RUNTIME_FACTOR_STATUS.clear()
     RUNTIME_FACTOR_STATUS.update(runtime)
     keep = list(features.columns)
-    return features[keep].select_dtypes(include=[np.number]).replace([np.inf, -np.inf], np.nan).astype("float32")
+    # Normalize at the feature-builder boundary so every downstream stage
+    # (exact labels, controls, neutralization, deciles, and portfolio) sees
+    # the same canonical index.  Doing this only inside label construction
+    # leaves the caller's feature frame with unnamed/reversed levels.
+    result = features[keep].select_dtypes(include=[np.number]).replace(
+        [np.inf, -np.inf], np.nan
+    ).astype("float32")
+    return _ensure_research_index(result)
 
 
 def _full_analysis_features(features: pd.DataFrame) -> list[str]:
