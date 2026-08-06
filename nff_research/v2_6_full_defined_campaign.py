@@ -263,6 +263,15 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
     normalized = frame if already_canonical else frame.copy(deep=False)
     normalized_index = index if already_canonical else index.reorder_levels(desired_positions)
     normalized.index = normalized_index.set_names(canonical_names)
+
+    def deduplicate(result: pd.DataFrame) -> pd.DataFrame:
+        duplicate_mask = result.index.duplicated(keep="last")
+        if not bool(duplicate_mask.any()):
+            return result
+        compact = result.loc[~duplicate_mask].copy(deep=False)
+        compact.attrs["research_index_collision_count"] = int(duplicate_mask.sum())
+        return compact
+
     parsed_datetime = pd.to_datetime(
         normalized.index.get_level_values("datetime"), utc=True, errors="coerce"
     )
@@ -278,7 +287,7 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
         swapped_rate = float(swapped_datetime.notna().mean()) if len(swapped_datetime) else 0.0
         if swapped_rate >= 0.9:
             normalized.index = swapped_index
-            return normalized
+            return deduplicate(normalized)
         # A wider concat can mix both tuple orientations row by row:
         # (datetime, instrument) and (instrument, datetime).  Level
         # reordering cannot repair that case, so classify each row by which
@@ -313,7 +322,7 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
                 [symbols, times.to_numpy()],
                 names=canonical_names,
             )
-            return normalized
+            return deduplicate(normalized)
     if parse_rate < 0.9:
         samples = [
             list(normalized.index.get_level_values(position)[:5])
@@ -324,7 +333,7 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
             f"names={list(normalized.index.names)!r}, parse_rate={parse_rate:.4f}, "
             f"level_samples={samples!r}"
         )
-    return normalized
+    return deduplicate(normalized)
 
 
 def _session_valid(index: pd.MultiIndex, horizon: int) -> pd.Series:
