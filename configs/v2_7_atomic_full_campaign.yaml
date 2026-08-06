@@ -2,7 +2,7 @@ research_version: "2.7-real-schema-atomic"
 base_runner_version: "2.6-full-defined"
 
 run:
-  name: v2_7_atomic_full_defined_20260806_r1
+  name: v2_7_atomic_full_defined_20260806_r2
   script: nff_research/v2_7_launch.py
   start_date: "2026-01-02"
   end_date: "2026-07-22"
@@ -33,6 +33,8 @@ atomic:
     - run_contract_hash
     - instruction_sha256
     - date_index_hash
+    - upstream_parquet_fingerprint
+    - physical_contract_version
     - factor_ids
     - factor_formulas
 
@@ -53,11 +55,16 @@ study:
     - minute_visibility_topology_raw
     - trade_visibility_edge_raw
     - trade_visibility_topology_raw
-  schema_resolution: "runtime parquet schema per date; no guessed field fallback"
+  schema_resolution: "runtime Parquet schema per date; exact field or documented mathematically equivalent reconstruction only"
   directional_source_priority:
-    - nvg_supplement/minute_nvg_edge_raw
-    - feature/minute_nvg
-    - structural top-bottom fallback for coverage only
+    - nvg_supplement/minute_nvg_edge_raw terminal_signed_edge_balance
+    - nvg_supplement/minute_nvg_edge_raw terminal_long_edge_signed_slope
+    - no top_bottom_asymmetry substitution for terminal direction
+  physical_windows:
+    minute_nvg: [10m, 15m, 30m]
+    minute_nvg_topology: [10m, 15m, 30m]
+    minute_hvg_risk: [15m, 30m, 60m]
+    trade_visibility: [60s, 180s, 300s]
   universe_layers:
     - all_pit_eligible
     - common_structural
@@ -68,7 +75,15 @@ study:
     - final_trading_universe
   raw_fields_inventory: true
   derived_supplement_factor: true
-  factor_registry_mode: "all A-K prototypes expanded on actual warehouse windows plus exact NVG supplement directional consensus"
+  factor_registry_mode: "476 legacy formal specs audited; 464 warehouse-exact executable specs modeled"
+
+factor_resolution_policy:
+  expected_legacy_specs: 476
+  expected_physical_specs: 464
+  legacy_gap: "12 C@60m price-NVG topology specs; no physical 60m topology product"
+  fail_on_unavailable: true
+  fail_on_zero_coverage: true
+  forbid_semantic_substitution: true
 
 labels:
   primary_execution: return_vwap_to_vwap
