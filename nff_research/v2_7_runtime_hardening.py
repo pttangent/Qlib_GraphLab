@@ -1,100 +1,28 @@
 from __future__ import annotations
 
-"""Runtime hardening shared by parent and detached v2.7 date workers."""
+"""Runtime field and factor resolution audit for v2.7."""
 
 from collections import defaultdict
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 
-EPS = 1e-8
 FIELD_RESOLUTION: dict[str, dict[str, Any]] = defaultdict(
-    lambda: {"calls": 0, "resolved": None, "resolver": None, "non_null_rate": None}
+    lambda: {"calls": 0, "resolved": None, "resolver": None, "non_null_rate": 0.0}
 )
 
 
-def _shift(series: pd.Series, periods: int, instruments: pd.Index) -> pd.Series:
-    return series.groupby(instruments, sort=False, group_keys=False).shift(periods)
-
-
-def _rolling(series: pd.Series, window: int, operation: str, minimum: int) -> pd.Series:
-    result = getattr(
-        series.groupby(level="instrument", sort=False).rolling(window, min_periods=minimum),
-        operation,
-    )()
-    return result.reset_index(level=0, drop=True).reindex(series.index)
-
-
-def _path_metrics(values: pd.Series, window: int) -> dict[str, pd.Series]:
-    instruments = values.index.get_level_values("instrument")
-    change = values - _shift(values, window - 1, instruments)
-    step = values.groupby(instruments, sort=False, group_keys=False).diff().abs()
-    path_length = _rolling(step, window - 1, "sum", window - 1)
-    high = _rolling(values, window, "max", window)
-    low = _rolling(values, window, "min", window)
-    value_range = high - low
-    return {
-        "signed_change": change,
-        "efficiency": change.abs() / (path_length + EPS),
-        "roughness": path_length / (change.abs() + EPS),
-        "range": value_range,
-        "terminal_position": (values - low) / (value_range + EPS),
-    }
-
-
-def _enrich_causal_paths(frame: pd.DataFrame, campaign: Any) -> pd.DataFrame:
-    generated: dict[str, pd.Series] = {}
-    windows = sorted(
-        {
-            int(str(window).removesuffix("m"))
-            for window in campaign.RUNTIME_WINDOWS.get("A", ())
-            if str(window).endswith("m")
-        }
-    )
-    close = frame.get("bars_1m__close")
-    dollar = frame.get("bars_1m__dollar_volume")
-    if close is not None:
-        log_close = np.log(pd.to_numeric(close, errors="coerce").replace(0, np.nan))
-        for window in windows:
-            for metric, value in _path_metrics(log_close, window).items():
-                generated[f"minute_nvg__price_path_{window}m_{metric}"] = value.astype("float32")
-            generated[f"traditional__momentum_{window}m"] = _path_metrics(log_close, window)[
-                "signed_change"
-            ].astype("float32")
-    if dollar is not None:
-        log_dollar = np.log1p(pd.to_numeric(dollar, errors="coerce").clip(lower=0))
-        for window in windows:
-            for metric, value in _path_metrics(log_dollar, window).items():
-                generated[f"minute_nvg__volume_path_{window}m_{metric}"] = value.astype("float32")
-
-    active = frame.get("trade_nvg__active_second_ratio_60s")
-    if active is None:
-        active = frame.get("trade_nvg__trade_active_second_ratio_60s")
-    if active is not None:
-        active = pd.to_numeric(active, errors="coerce")
-        for seconds, minutes in ((60, 1), (180, 3), (300, 5)):
-            ratio = active if minutes == 1 else _rolling(active, minutes, "mean", 1)
-            generated[f"trade_nvg__trade_active_second_ratio_{seconds}s"] = ratio.astype("float32")
-            generated[f"trade_nvg__trade_price_stale_ratio_{seconds}s"] = (1.0 - ratio).astype("float32")
-            observed = active.notna().astype(float)
-            coverage = observed if minutes == 1 else _rolling(observed, minutes, "mean", 1)
-            generated[f"trade_nvg__trade_observation_coverage_{seconds}s"] = coverage.astype("float32")
-
-    if not generated:
-        return frame
-    block = pd.concat(generated, axis=1, copy=False)
-    block.columns = list(generated)
-    missing = [column for column in block if column not in frame]
-    return pd.concat([frame, block[missing]], axis=1, copy=False) if missing else frame
-
-
 def _candidate_names(campaign: Any, name: str) -> list[str]:
-    candidates = [name, campaign._strip_namespace(name)]
-    bare = campaign._strip_namespace(name)
+    candidates = [name]
+    for prefix in ("minute_nvg__", "trade_nvg__", "hawkes_lite__", "hawkes_derived__"):
+        if name.startswith(prefix):
+            candidates.append(name[len(prefix) :])
+    bare = candidates[-1]
     aliases = {
         "_top_terminal_slope_mean": "_top_terminal_signed_mean_slope",
         "_bottom_terminal_slope_mean": "_bottom_terminal_signed_mean_slope",
@@ -113,18 +41,83 @@ def _candidate_names(campaign: Any, name: str) -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
+def _groups(series: pd.Series) -> pd.Index:
+    return series.index.get_level_values("instrument")
+
+
+def _path_metrics(series: pd.Series, window: int) -> dict[str, pd.Series]:
+    numeric = pd.to_numeric(series, errors="coerce").astype("float64")
+    groups = _groups(numeric)
+    grouped = numeric.groupby(groups, sort=False, group_keys=False)
+    start = grouped.shift(window - 1)
+    signed_change = numeric - start
+    difference = grouped.diff().abs()
+    path_length = difference.groupby(groups, sort=False, group_keys=False).transform(
+        lambda value: value.rolling(window, min_periods=window - 1).sum()
+    )
+    rolling_min = grouped.transform(
+        lambda value: value.rolling(window, min_periods=window).min()
+    )
+    rolling_max = grouped.transform(
+        lambda value: value.rolling(window, min_periods=window).max()
+    )
+    range_value = rolling_max - rolling_min
+    efficiency = signed_change.abs() / (path_length + 1e-8)
+    roughness = path_length / (signed_change.abs() + 1e-8)
+    terminal_position = (numeric - rolling_min) / (range_value + 1e-8)
+    return {
+        "signed_change": signed_change.astype("float32"),
+        "efficiency": efficiency.astype("float32"),
+        "roughness": roughness.astype("float32"),
+        "range": range_value.astype("float32"),
+        "terminal_position": terminal_position.astype("float32"),
+    }
+
+
+def _enrich_causal_paths(frame: pd.DataFrame, campaign: Any) -> pd.DataFrame:
+    generated: dict[str, pd.Series] = {}
+    close = frame.get("bars_1m__close")
+    dollar = frame.get("bars_1m__dollar_volume")
+    for window_text in sorted(
+        {
+            value
+            for family in ("A", "B", "C", "D")
+            for value in campaign.RUNTIME_WINDOWS.get(family, ())
+            if str(value).endswith("m")
+        }
+    ):
+        window = int(str(window_text)[:-1])
+        if close is not None:
+            price = np.log(pd.to_numeric(close, errors="coerce").replace(0, np.nan))
+            for metric, value in _path_metrics(price, window).items():
+                target = f"minute_nvg__price_path_{window_text}_{metric}"
+                if target not in frame:
+                    generated[target] = value
+        if dollar is not None:
+            volume = np.log1p(pd.to_numeric(dollar, errors="coerce").clip(lower=0))
+            for metric, value in _path_metrics(volume, window).items():
+                target = f"minute_nvg__volume_path_{window_text}_{metric}"
+                if target not in frame:
+                    generated[target] = value
+    if not generated:
+        return frame
+    block = pd.concat(generated, axis=1, copy=False)
+    block.columns = list(generated)
+    return pd.concat([frame, block], axis=1, copy=False)
+
+
 def _write_resolution(campaign: Any, result: pd.DataFrame) -> None:
-    context = campaign.CTX
-    if context is None:
+    if campaign.CTX is None:
         return
-    root = context.root / "schema"
+    root = campaign.CTX.root / "schema"
     root.mkdir(parents=True, exist_ok=True)
     rows = [
         {"requested_field": name, **record}
         for name, record in sorted(FIELD_RESOLUTION.items())
     ]
-    pd.DataFrame(rows).to_parquet(root / "field_resolution.parquet", index=False)
-    pd.DataFrame(rows).to_csv(root / "field_resolution.csv", index=False)
+    frame = pd.DataFrame(rows)
+    frame.to_parquet(root / "field_resolution.parquet", index=False)
+    frame.to_csv(root / "field_resolution.csv", index=False)
 
     registry = campaign.V26.SPEC_REGISTRY.copy()
     runtime = campaign.V26.RUNTIME_FACTOR_STATUS
@@ -158,16 +151,34 @@ def install(campaign: Any) -> None:
     def tracked_column(frame: pd.DataFrame, name: str):
         record = FIELD_RESOLUTION[name]
         record["calls"] += 1
-        selected = next((candidate for candidate in _candidate_names(campaign, name) if candidate in frame), None)
-        value = base_column(frame, name)
+        candidates = _candidate_names(campaign, name)
+        selected = next((candidate for candidate in candidates if candidate in frame), None)
+        try:
+            value = base_column(frame, name)
+        except KeyError as exc:
+            # `_column_exact` normally delegates to ORIGINAL["column"], which
+            # is populated by the worker install path. Formula/unit consumers
+            # can legitimately call the final resolver before `main()`; in
+            # that case use the underlying exact/suffix resolver rather than
+            # raising a lifecycle-dependent KeyError.
+            if exc.args != ("column",):
+                raise
+            value = campaign.FF._column(frame, name)
+            if value is not None:
+                record["resolver"] = "preinstall_factor_engine_fallback"
         if selected is not None:
             record["resolved"] = selected
             record["resolver"] = "exact_or_documented_alias"
         elif value is not None:
-            record["resolved"] = "legacy_suffix_resolver"
-            record["resolver"] = "legacy_suffix_resolver"
+            record["resolved"] = (
+                "factor_engine_fallback"
+                if record.get("resolver") == "preinstall_factor_engine_fallback"
+                else "legacy_suffix_resolver"
+            )
+            record["resolver"] = record.get("resolver") or "legacy_suffix_resolver"
         if value is not None:
-            record["non_null_rate"] = float(pd.to_numeric(value, errors="coerce").notna().mean())
+            value = pd.to_numeric(value, errors="coerce").astype("float32")
+            record["non_null_rate"] = float(value.notna().mean())
         return value
 
     def add_all(frame: pd.DataFrame) -> pd.DataFrame:
