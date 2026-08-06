@@ -71,6 +71,7 @@ CTX: Context | None = None
 ORIGINAL: dict[str, Any] = {}
 RUNTIME_WINDOWS: dict[str, tuple[str, ...]] = {}
 FUTURE_CACHE: dict[tuple[int, str, int], pd.Series] = {}
+FUTURE_WIDE_CACHE: dict[tuple[int, str], tuple[pd.DatetimeIndex, pd.Index, np.ndarray]] = {}
 
 
 def _hash(value: Any) -> str:
@@ -660,6 +661,25 @@ def _supplement_direction(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, 
     return result, runtime
 
 
+def _aggregate_venue_level(level: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate venue rows without Python callbacks inside groupby.agg."""
+    keys = ["__symbol", "__timestamp"]
+    total = level.groupby(keys, sort=False)["volume"].transform("sum")
+    share = level["volume"].div(total.replace(0, np.nan))
+    work = level.copy(deep=False)
+    work["venue_share"] = share
+    return work.groupby(keys, sort=False).agg(
+        off_exchange_volume=("off_volume", "sum"),
+        lit_volume=("lit_volume", "sum"),
+        dark_signed_flow=("dark_flow", "sum"),
+        lit_signed_flow=("lit_flow", "sum"),
+        venue_hhi=("hhi", "sum"),
+        venue_entropy=("entropy", "sum"),
+        dominant_venue_share=("venue_share", "max"),
+        venue_count=("__venue", "nunique"),
+    ).reset_index()
+
+
 def _merge_venue_exact(frame: pd.DataFrame, warehouse_root: Path) -> pd.DataFrame:
     if frame.empty:
         return frame
@@ -701,16 +721,7 @@ def _merge_venue_exact(frame: pd.DataFrame, warehouse_root: Path) -> pd.DataFram
         level["lit_volume"] = level["volume"].where(~level["is_off_exchange"], 0)
         level["dark_flow"] = level["flow"].where(level["is_off_exchange"], 0)
         level["lit_flow"] = level["flow"].where(~level["is_off_exchange"], 0)
-        agg = level.groupby(["__symbol", "__timestamp"], sort=False).agg(
-            off_exchange_volume=("off_volume", "sum"),
-            lit_volume=("lit_volume", "sum"),
-            dark_signed_flow=("dark_flow", "sum"),
-            lit_signed_flow=("lit_flow", "sum"),
-            venue_hhi=("hhi", "sum"),
-            venue_entropy=("entropy", "sum"),
-            dominant_venue_share=("volume", lambda s: float(s.max() / s.sum()) if float(s.sum()) > 0 else np.nan),
-            venue_count=("__venue", "nunique"),
-        ).reset_index()
+        agg = _aggregate_venue_level(level)
         total_volume = agg["off_exchange_volume"] + agg["lit_volume"]
         agg["off_exchange_share"] = agg["off_exchange_volume"] / total_volume.replace(0, np.nan)
         agg["dark_lit_divergence"] = agg["dark_signed_flow"] - agg["lit_signed_flow"]
@@ -807,14 +818,46 @@ def _add_all_features(frame: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def _future_exact_fast(frame: pd.DataFrame, column: str, offset_minutes: int) -> pd.Series:
+    """Lookup exact future timestamps through one cached symbol-wide matrix."""
+    key = (id(frame), column, int(offset_minutes))
+    cached = FUTURE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    wide_key = (id(frame), column)
+    try:
+        cached_wide = FUTURE_WIDE_CACHE.get(wide_key)
+        if cached_wide is None:
+            source = pd.to_numeric(frame[column], errors="coerce")
+            wide = source.unstack(level="instrument")
+            cached_wide = (
+                pd.DatetimeIndex(pd.to_datetime(wide.index, utc=True)),
+                wide.columns,
+                np.asarray(wide, dtype="float64"),
+            )
+            FUTURE_WIDE_CACHE[wide_key] = cached_wide
+        wide_times, wide_symbols, wide_values = cached_wide
+        index = frame.index
+        times = pd.DatetimeIndex(pd.to_datetime(index.get_level_values("datetime"), utc=True))
+        symbols = pd.Index(index.get_level_values("instrument"))
+        time_positions = wide_times.get_indexer(times + pd.Timedelta(minutes=int(offset_minutes)))
+        symbol_positions = wide_symbols.get_indexer(symbols)
+        valid = (time_positions >= 0) & (symbol_positions >= 0)
+        values = np.full(len(index), np.nan, dtype="float64")
+        values[valid] = wide_values[time_positions[valid], symbol_positions[valid]]
+        result = pd.Series(values, index=index, name=column)
+    except (KeyError, ValueError, TypeError):
+        result = ORIGINAL["future_exact"](frame, column, int(offset_minutes))
+    FUTURE_CACHE[key] = result
+    return result
+
+
 def _future_exact_cached(frame: pd.DataFrame, column: str, offset_minutes: int) -> pd.Series:
     key = (id(frame), column, int(offset_minutes))
     cached = FUTURE_CACHE.get(key)
     if cached is not None:
         return cached
-    value = ORIGINAL["future_exact"](frame, column, offset_minutes)
-    FUTURE_CACHE[key] = value
-    return value
+    return _future_exact_fast(frame, column, offset_minutes)
 
 
 def _ranked_ic_stats_vectorized(
@@ -924,15 +967,31 @@ def _ranked_ic_stats_vectorized(
     return minute_out, pooled_out
 
 
-def _ranked_ic_stats_from_ranked_features(
+def _ranked_ic_stats_from_ranked_features_fast(
     ranked_features: pd.DataFrame,
     label: pd.Series,
     feature_columns: list[str],
     min_n: int,
 ) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]]]:
-    """Reuse a pre-ranked feature matrix for another label on the same mask."""
+    """Compute IC from a cached rank matrix without per-minute DataFrame concat.
+
+    The feature ranks are already cross-sectional.  The remaining work is
+    performed on NumPy blocks grouped by integer datetime codes, so the
+    464-column matrix is scanned once per label instead of repeatedly copying
+    and aligning a wide pandas frame.
+    """
     feature_count = len(feature_columns)
-    minute_values: list[list[float]] = [[] for _ in feature_columns]
+    feature_values = ranked_features[feature_columns].to_numpy(dtype="float64", copy=False)
+    aligned_label = label.reindex(ranked_features.index).to_numpy(dtype="float64", copy=False)
+    datetimes = ranked_features.index.get_level_values("datetime")
+    datetime_codes = pd.factorize(datetimes, sort=False)[0]
+    order = np.argsort(datetime_codes, kind="stable")
+    sorted_codes = datetime_codes[order]
+    boundaries = np.flatnonzero(np.diff(sorted_codes)) + 1
+    starts = np.r_[0, boundaries]
+    ends = np.r_[boundaries, len(order)]
+
+    minute_corrs: list[np.ndarray] = []
     minute_counts = np.zeros(feature_count, dtype="int64")
     pooled_n = np.zeros(feature_count, dtype="float64")
     pooled_sx = np.zeros(feature_count, dtype="float64")
@@ -941,41 +1000,47 @@ def _ranked_ic_stats_from_ranked_features(
     pooled_syy = np.zeros(feature_count, dtype="float64")
     pooled_sxy = np.zeros(feature_count, dtype="float64")
     admitted_minutes = 0
-    work = pd.concat([ranked_features[feature_columns], label.rename("__label")], axis=1)
 
-    for _, block in work.groupby(level="datetime", sort=False):
-        ranked_y = block["__label"].rank(method="average")
-        y_raw = ranked_y.to_numpy(dtype="float64")
-        y_valid = np.isfinite(y_raw)
+    for start, end in zip(starts, ends):
+        positions = order[start:end]
+        x_raw = feature_values[positions]
+        y_values = aligned_label[positions]
+        ranked_y = pd.Series(y_values).rank(method="average").to_numpy(dtype="float64")
+        y_valid = np.isfinite(ranked_y)
         if int(y_valid.sum()) < min_n:
             continue
         admitted_minutes += 1
-        x_raw = block[feature_columns].to_numpy(dtype="float64", copy=False)
-        valid = np.isfinite(x_raw) & y_valid[:, None]
+
+        feature_valid = np.isfinite(x_raw)
+        valid = feature_valid & y_valid[:, None]
         n = valid.sum(axis=0).astype("float64")
         x0 = np.where(valid, x_raw, 0.0)
-        y0 = np.where(valid, y_raw[:, None], 0.0)
+        y0 = np.where(y_valid, ranked_y, 0.0)
         sx = x0.sum(axis=0, dtype="float64")
-        sy = y0.sum(axis=0, dtype="float64")
+        sy = y0 @ valid
         sxx = (x0 * x0).sum(axis=0, dtype="float64")
-        syy = (y0 * y0).sum(axis=0, dtype="float64")
-        sxy = (x0 * y0).sum(axis=0, dtype="float64")
+        syy = (y0 * y0) @ valid
+        sxy = y0 @ x0
         with np.errstate(divide="ignore", invalid="ignore"):
             cov = sxy - sx * sy / n
             vx = sxx - sx * sx / n
             vy = syy - sy * sy / n
             corr = cov / np.sqrt(np.maximum(vx, 0.0) * np.maximum(vy, 0.0))
-        eligible = (n >= min_n) & np.isfinite(corr)
+        corr[(n < min_n) | ~np.isfinite(corr)] = np.nan
+        minute_corrs.append(corr)
         minute_counts += n.astype("int64")
-        for idx in np.flatnonzero(eligible):
-            minute_values[idx].append(float(corr[idx]))
 
         label_count = int(y_valid.sum())
-        y_pooled = y_raw / float(label_count)
+        y_pooled = ranked_y / float(label_count)
         y_pooled[~y_valid] = np.nan
         y_pooled -= np.nanmean(y_pooled)
-        feature_counts = np.isfinite(x_raw).sum(axis=0).astype("float64")
-        x_pooled = x_raw / feature_counts[None, :]
+        feature_counts = feature_valid.sum(axis=0).astype("float64")
+        x_pooled = np.divide(
+            x_raw,
+            feature_counts[None, :],
+            out=np.full_like(x_raw, np.nan, dtype="float64"),
+            where=feature_counts[None, :] > 0,
+        )
         feature_means = np.divide(
             np.nansum(x_pooled, axis=0),
             feature_counts,
@@ -989,8 +1054,8 @@ def _ranked_ic_stats_from_ranked_features(
         pooled_sx += xp0.sum(axis=0, dtype="float64")
         pooled_sy += yp0.sum(axis=0, dtype="float64")
         pooled_sxx += (xp0 * xp0).sum(axis=0, dtype="float64")
-        pooled_syy += (yp0 * yp0).sum(axis=0, dtype="float64")
-        pooled_sxy += (xp0 * yp0).sum(axis=0, dtype="float64")
+        pooled_syy += ((y_pooled * y_pooled)[:, None] * valid).sum(axis=0, dtype="float64")
+        pooled_sxy += y_pooled @ xp0
 
     with np.errstate(divide="ignore", invalid="ignore"):
         pooled_cov = pooled_sxy - pooled_sx * pooled_sy / pooled_n
@@ -999,10 +1064,14 @@ def _ranked_ic_stats_from_ranked_features(
         pooled_corr = pooled_cov / np.sqrt(
             np.maximum(pooled_vx, 0.0) * np.maximum(pooled_vy, 0.0)
         )
+    minute_matrix = (
+        np.vstack(minute_corrs) if minute_corrs else np.empty((0, feature_count), dtype="float64")
+    )
     minute_out: dict[str, dict[str, float]] = {}
     pooled_out: dict[str, dict[str, float]] = {}
     for idx, feature in enumerate(feature_columns):
-        values = np.asarray(minute_values[idx], dtype="float64")
+        values = minute_matrix[:, idx]
+        values = values[np.isfinite(values)]
         value = float(pooled_corr[idx]) if pooled_n[idx] >= min_n and np.isfinite(pooled_corr[idx]) else math.nan
         minute_out[feature] = {
             "ic_minutes": int(values.size),
@@ -1019,6 +1088,18 @@ def _ranked_ic_stats_from_ranked_features(
             "rank_ic_positive_ratio": float(value > 0) if np.isfinite(value) else math.nan,
         }
     return minute_out, pooled_out
+
+
+def _ranked_ic_stats_from_ranked_features(
+    ranked_features: pd.DataFrame,
+    label: pd.Series,
+    feature_columns: list[str],
+    min_n: int,
+) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]]]:
+    """Compatibility name for the batched ranked-feature IC implementation."""
+    return _ranked_ic_stats_from_ranked_features_fast(
+        ranked_features, label, feature_columns, min_n
+    )
 
 
 def _minute_rank_ic_summary_rank_cache(
@@ -1038,6 +1119,19 @@ def _minute_rank_ic_summary_rank_cache(
     feature_columns = R.analysis_features(features)
     decile_cache_features = [column for column in R.CORE_DECILE_FEATURES if column in feature_columns]
     masks = R.universe_masks(features, controls)
+    # ``own_feature_universe`` is a compatibility alias for the full PIT mask.
+    # Do not repeat the expensive per-label/per-factor cross-sectional ranking.
+    canonical_masks: dict[str, pd.Series] = {}
+    universe_aliases: dict[str, str] = {}
+    for universe, universe_mask in masks.items():
+        if (
+            universe == "own_feature_universe"
+            and "all_pit_eligible" in canonical_masks
+            and universe_mask.equals(canonical_masks["all_pit_eligible"])
+        ):
+            universe_aliases[universe] = "all_pit_eligible"
+            continue
+        canonical_masks[universe] = universe_mask
     def _process_universe(
         universe: str, universe_mask: pd.Series
     ) -> tuple[list[dict[str, Any]], dict[tuple[str, str], tuple[pd.DataFrame, pd.Series]]]:
@@ -1101,15 +1195,22 @@ def _minute_rank_ic_summary_rank_cache(
     rows: list[dict[str, Any]] = []
     residual_cache: dict[tuple[str, str], tuple[pd.DataFrame, pd.Series]] = {}
     max_workers = min(3, max(1, len(masks)))
+    canonical_rows: dict[str, list[dict[str, Any]]] = {}
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ic-universe") as executor:
         futures = [
             executor.submit(_process_universe, universe, universe_mask)
-            for universe, universe_mask in masks.items()
+            for universe, universe_mask in canonical_masks.items()
         ]
         for future in futures:
             universe_rows, universe_cache = future.result()
             rows.extend(universe_rows)
             residual_cache.update(universe_cache)
+            if universe_rows:
+                canonical_rows[universe_rows[0]["universe"]] = universe_rows
+    for alias, canonical in universe_aliases.items():
+        rows.extend(
+            [{**row, "universe": alias} for row in canonical_rows.get(canonical, [])]
+        )
     return pd.DataFrame(rows), residual_cache
 
 
@@ -1124,6 +1225,35 @@ def _stage_cache(name: str, function: Callable[..., pd.DataFrame]) -> Callable[.
             _atomic_parquet(result, path, index=False)
         return result
     return wrapped
+
+
+def _datetime_first_portfolio_frame(frame: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
+    """Keep portfolio weights index-compatible with the reference implementation."""
+    index = frame.index
+    if not isinstance(index, pd.MultiIndex):
+        return frame
+    names = list(index.names)
+    if "datetime" not in names or "instrument" not in names:
+        return frame
+    desired = ["datetime", "instrument"] + [name for name in names if name not in {"datetime", "instrument"}]
+    if names == desired:
+        return frame
+    return frame.reorder_levels(desired).sort_index()
+
+
+def _portfolio_index_safe(*args: Any, **kwargs: Any) -> pd.DataFrame:
+    """Normalize the four aligned portfolio inputs before legacy weight lookup."""
+    if len(args) < 4:
+        return R.staggered_portfolio_proxy(*args, **kwargs)
+    normalized = list(args)
+    normalized[0] = _datetime_first_portfolio_frame(args[0])
+    normalized[1] = _datetime_first_portfolio_frame(args[1])
+    normalized[2] = {
+        name: _datetime_first_portfolio_frame(value)
+        for name, value in args[2].items()
+    }
+    normalized[3] = _datetime_first_portfolio_frame(args[3])
+    return ORIGINAL["portfolio"](*normalized, **kwargs)
 
 
 def _residualize_cached(values: pd.DataFrame, controls: pd.DataFrame, min_n: int = 40) -> pd.DataFrame:
@@ -1351,6 +1481,7 @@ def _install_context(config: Mapping[str, Any]) -> None:
                 encoding="utf-8",
             )
             FUTURE_CACHE.clear()
+            FUTURE_WIDE_CACHE.clear()
             CTX = None
 
     R.run_date = run_date
@@ -1428,7 +1559,7 @@ def install(config: Mapping[str, Any]) -> None:
     R.join_daily_controls = join_daily_controls_canonical
     R._residualize_matrix = _residualize_cached
     R.decile_curves = _deciles_fast
-    R.staggered_portfolio_proxy = _stage_cache("portfolio_proxy", R.staggered_portfolio_proxy)
+    R.staggered_portfolio_proxy = _stage_cache("portfolio_proxy", _portfolio_index_safe)
     _install_context(config)
     _install_worker_command()
     _install_progress_status_bridge()

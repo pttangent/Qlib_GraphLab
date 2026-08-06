@@ -135,6 +135,7 @@ TURNOVER_CONTROL_POLICY = {
     "max_replacement_fraction": 0.50,
 }
 ENABLED_PORTFOLIO_VARIANTS: list[str] | None = None
+PORTFOLIO_WORKERS = 8
 
 RESEARCH_VERSION = "2.3"
 BASE_RUNNER_VERSION = "2.1"
@@ -308,7 +309,7 @@ def load_yaml_config(path: str | None) -> dict[str, Any]:
 
 
 def apply_config_globals(config: dict[str, Any]) -> None:
-    global WAREHOUSE_ROOT, RESEARCH_ROOT, RAW_1M_ROOT, NFF_SRC_ROOT, INDUSTRY_METADATA_PATH, CONTROLS_ROOT, TURNOVER_CONTROL_POLICY, ENABLED_PORTFOLIO_VARIANTS
+    global WAREHOUSE_ROOT, RESEARCH_ROOT, RAW_1M_ROOT, NFF_SRC_ROOT, INDUSTRY_METADATA_PATH, CONTROLS_ROOT, TURNOVER_CONTROL_POLICY, ENABLED_PORTFOLIO_VARIANTS, PORTFOLIO_WORKERS
     paths = config.get("local_paths", {}) if isinstance(config.get("local_paths", {}), dict) else {}
     if paths.get("warehouse_root"):
         WAREHOUSE_ROOT = Path(paths["warehouse_root"])
@@ -322,6 +323,8 @@ def apply_config_globals(config: dict[str, Any]) -> None:
         INDUSTRY_METADATA_PATH = Path(paths["industry_metadata"])
     CONTROLS_ROOT = RESEARCH_ROOT / "derived_inputs" / "daily_bar_controls_v2_1"
     portfolio = config.get("portfolio_proxy", {}) if isinstance(config.get("portfolio_proxy", {}), dict) else {}
+    atomic = config.get("atomic", {}) if isinstance(config.get("atomic", {}), dict) else {}
+    PORTFOLIO_WORKERS = max(1, int(portfolio.get("workers", atomic.get("intra_date_workers", PORTFOLIO_WORKERS))))
     configured_turnover = portfolio.get("turnover_controlled_variant", {})
     if isinstance(configured_turnover, dict):
         TURNOVER_CONTROL_POLICY = {
@@ -1976,6 +1979,302 @@ def _rebalance_ordinal(dt: Any, rebalance_minutes: int) -> int | None:
     return (minute - open_minute) // rebalance_minutes
 
 
+def _portfolio_feature_rows(
+    work: pd.DataFrame,
+    feature: str,
+    variant: dict[str, Any],
+    trade_date: str,
+    universe: str,
+    family: str,
+    horizon: int,
+    min_n: int,
+    cost_bps_per_turnover: float,
+) -> list[dict[str, Any]]:
+    """Compute one independent label/variant/feature portfolio stream."""
+    variant_rebalance = int(variant["rebalance_minutes"])
+    sleeve_count = max(1, int(math.ceil(horizon / variant_rebalance)))
+    prev_by_sleeve: dict[int, pd.Series] = {}
+    previous_signal_by_sleeve: dict[int, pd.Series] = {}
+    previous_hold_periods_by_sleeve: dict[int, dict[str, int]] = {}
+    columns = list(dict.fromkeys([feature, "label", "__adv20"]))
+    gate_column = variant.get("gate_column")
+    if variant["gate_pair_id"] is not None and gate_column in work.columns:
+        columns = list(dict.fromkeys([*columns, str(gate_column)]))
+    rows: list[dict[str, Any]] = []
+    for dt, block in work[columns].dropna(subset=[feature, "label", "__adv20"]).groupby(
+        level="datetime", sort=True
+    ):
+        rebalance_ordinal = _rebalance_ordinal(dt, variant_rebalance)
+        if rebalance_ordinal is None or len(block) < min_n:
+            continue
+        sleeve_id = rebalance_ordinal % sleeve_count
+        block = block.assign(__signal=block[feature].astype(float) * float(variant["direction"]))
+        if variant["gate_pair_id"] is not None:
+            if gate_column not in block.columns:
+                continue
+            pre_gate, gated, gate_stats = _hawkes_gate_pair(
+                block,
+                str(gate_column),
+                "__adv20",
+                exclude_fraction=float(variant.get("exclude_fraction", 0.20)),
+            )
+            if variant["gate_mode"] == "exclude_top20":
+                block = gated
+            else:
+                block = pre_gate
+                gate_stats = {
+                    **gate_stats,
+                    "eligible_count": int(len(pre_gate)),
+                    "gate_kept_ratio": 1.0,
+                    "eligible_adv20_sum": gate_stats["pre_gate_adv20_sum"],
+                    "eligible_adv20_kept_ratio": 1.0,
+                }
+        else:
+            adv_sum = float(pd.to_numeric(block["__adv20"], errors="coerce").sum())
+            gate_stats = {
+                "pre_gate_count": int(len(block)),
+                "eligible_count": int(len(block)),
+                "gate_kept_ratio": 1.0,
+                "pre_gate_adv20_sum": adv_sum,
+                "eligible_adv20_sum": adv_sum,
+                "eligible_adv20_kept_ratio": 1.0,
+            }
+        if len(block) < min_n:
+            continue
+        turnover_state: dict[str, Any] = {
+            "replacement_count": 0,
+            "replacement_budget": 0,
+            "minimum_hold_retained_count": 0,
+        }
+        if variant.get("turnover_controlled", False):
+            weights, turnover_state = _turnover_controlled_weights(
+                block,
+                "__signal",
+                prev_by_sleeve.get(sleeve_id),
+                previous_signal_by_sleeve.get(sleeve_id),
+                previous_hold_periods_by_sleeve.get(sleeve_id),
+                quantile=float(variant["quantile"]),
+                buffer_quantile=float(TURNOVER_CONTROL_POLICY["buffer_quantile"]),
+                min_hold_periods=int(TURNOVER_CONTROL_POLICY["min_hold_periods"]),
+                signal_change_threshold=float(TURNOVER_CONTROL_POLICY["signal_change_threshold"]),
+                max_replacement_fraction=float(TURNOVER_CONTROL_POLICY["max_replacement_fraction"]),
+            )
+        else:
+            weights = _portfolio_weights(block, "__signal", quantile=float(variant["quantile"]))
+        if weights.empty:
+            continue
+        long_mask = weights > 0
+        short_mask = weights < 0
+        gross_return = float((weights * block.loc[weights.index, "label"]).sum())
+        prev_weights = prev_by_sleeve.get(sleeve_id)
+        turnover = _same_sleeve_turnover(weights, prev_weights)
+        cost = turnover * cost_bps_per_turnover / 10000.0
+        selected_adv20_sum = float(
+            pd.to_numeric(block.loc[weights.index, "__adv20"], errors="coerce").sum()
+        )
+        rows.append(
+            {
+                "trade_date": trade_date,
+                "datetime": dt,
+                "universe": universe,
+                "feature": feature,
+                "bundle": infer_bundle(feature),
+                "label_family": family,
+                "horizon_bars": horizon,
+                "portfolio_variant": variant["name"],
+                "signal_direction": "long_high" if variant["direction"] > 0 else "contrarian",
+                "quantile": float(variant["quantile"]),
+                "hawkes_liquidity_gate": variant["gate_mode"] == "exclude_top20",
+                "gate_pair_id": variant["gate_pair_id"],
+                "gate_mode": variant["gate_mode"],
+                "execution_role": "primary" if family == "return_vwap_to_vwap" else "diagnostic",
+                "variant_applicability": _portfolio_variant_applicability(horizon, variant_rebalance),
+                "rebalance_minutes": variant_rebalance,
+                "sleeve_count": sleeve_count,
+                "sleeve_id": sleeve_id,
+                "portfolio_accounting": "same_sleeve_turnover",
+                "turnover_policy": "hysteresis_min_hold_signal_threshold_replacement_budget" if variant.get("turnover_controlled", False) else "full_tail_rebuild",
+                "replacement_count": turnover_state["replacement_count"],
+                "replacement_budget": turnover_state["replacement_budget"],
+                "minimum_hold_retained_count": turnover_state["minimum_hold_retained_count"],
+                "long_count": int(long_mask.sum()),
+                "short_count": int(short_mask.sum()),
+                "selected_count": int(len(weights)),
+                **gate_stats,
+                "selected_adv20_sum": selected_adv20_sum,
+                "gross_return": gross_return,
+                "turnover": turnover,
+                "cost_bps_per_turnover": cost_bps_per_turnover,
+                "cost": cost,
+                "net_return": gross_return - cost,
+            }
+        )
+        prev_by_sleeve[sleeve_id] = weights
+        if variant.get("turnover_controlled", False):
+            previous_signal_by_sleeve[sleeve_id] = turnover_state["signal_percentiles"]
+            previous_hold_periods_by_sleeve[sleeve_id] = turnover_state["hold_periods"]
+    return rows
+
+
+def _portfolio_variant_rows_batched(
+    work: pd.DataFrame,
+    portfolio_features: list[str],
+    variant: dict[str, Any],
+    trade_date: str,
+    universe: str,
+    family: str,
+    horizon: int,
+    min_n: int,
+    cost_bps_per_turnover: float,
+) -> list[dict[str, Any]]:
+    """Compute one variant for all features while grouping the minute table once.
+
+    The per-feature state remains independent, but the expensive datetime
+    grouping and gate ranking are shared across the feature matrix.
+    """
+    variant_rebalance = int(variant["rebalance_minutes"])
+    sleeve_count = max(1, int(math.ceil(horizon / variant_rebalance)))
+    prev_by_feature: dict[str, dict[int, pd.Series]] = {
+        feature: {} for feature in portfolio_features
+    }
+    previous_signal_by_feature: dict[str, dict[int, pd.Series]] = {
+        feature: {} for feature in portfolio_features
+    }
+    previous_hold_periods_by_feature: dict[str, dict[int, dict[str, int]]] = {
+        feature: {} for feature in portfolio_features
+    }
+    gate_column = variant.get("gate_column")
+    columns = list(dict.fromkeys([*portfolio_features, "label", "__adv20"]))
+    if variant["gate_pair_id"] is not None and gate_column in work.columns:
+        columns = list(dict.fromkeys([*columns, str(gate_column)]))
+    rows: list[dict[str, Any]] = []
+    grouped = work[columns].groupby(level="datetime", sort=True)
+    for dt, raw_block in grouped:
+        rebalance_ordinal = _rebalance_ordinal(dt, variant_rebalance)
+        if rebalance_ordinal is None:
+            continue
+        base_block = raw_block.dropna(subset=["label", "__adv20"])
+        if len(base_block) < min_n:
+            continue
+        if variant["gate_pair_id"] is not None:
+            if gate_column not in base_block.columns:
+                continue
+            pre_gate, gated, shared_gate_stats = _hawkes_gate_pair(
+                base_block,
+                str(gate_column),
+                "__adv20",
+                exclude_fraction=float(variant.get("exclude_fraction", 0.20)),
+            )
+            if variant["gate_mode"] == "exclude_top20":
+                block = gated
+                gate_stats = shared_gate_stats
+            else:
+                block = pre_gate
+                gate_stats = {
+                    **shared_gate_stats,
+                    "eligible_count": int(len(pre_gate)),
+                    "gate_kept_ratio": 1.0,
+                    "eligible_adv20_sum": shared_gate_stats["pre_gate_adv20_sum"],
+                    "eligible_adv20_kept_ratio": 1.0,
+                }
+        else:
+            block = base_block
+            adv_sum = float(pd.to_numeric(block["__adv20"], errors="coerce").sum())
+            gate_stats = {
+                "pre_gate_count": int(len(block)),
+                "eligible_count": int(len(block)),
+                "gate_kept_ratio": 1.0,
+                "pre_gate_adv20_sum": adv_sum,
+                "eligible_adv20_sum": adv_sum,
+                "eligible_adv20_kept_ratio": 1.0,
+            }
+        if len(block) < min_n:
+            continue
+        sleeve_id = rebalance_ordinal % sleeve_count
+        for feature in portfolio_features:
+            feature_block = block.dropna(subset=[feature])
+            if len(feature_block) < min_n:
+                continue
+            feature_block = feature_block.assign(
+                __signal=feature_block[feature].astype(float) * float(variant["direction"])
+            )
+            previous = prev_by_feature[feature].get(sleeve_id)
+            previous_signals = previous_signal_by_feature[feature].get(sleeve_id)
+            previous_holds = previous_hold_periods_by_feature[feature].get(sleeve_id)
+            turnover_state: dict[str, Any] = {
+                "replacement_count": 0,
+                "replacement_budget": 0,
+                "minimum_hold_retained_count": 0,
+            }
+            if variant.get("turnover_controlled", False):
+                weights, turnover_state = _turnover_controlled_weights(
+                    feature_block,
+                    "__signal",
+                    previous,
+                    previous_signals,
+                    previous_holds,
+                    quantile=float(variant["quantile"]),
+                    buffer_quantile=float(TURNOVER_CONTROL_POLICY["buffer_quantile"]),
+                    min_hold_periods=int(TURNOVER_CONTROL_POLICY["min_hold_periods"]),
+                    signal_change_threshold=float(TURNOVER_CONTROL_POLICY["signal_change_threshold"]),
+                    max_replacement_fraction=float(TURNOVER_CONTROL_POLICY["max_replacement_fraction"]),
+                )
+            else:
+                weights = _portfolio_weights(feature_block, "__signal", quantile=float(variant["quantile"]))
+            if weights.empty:
+                continue
+            long_mask = weights > 0
+            short_mask = weights < 0
+            gross_return = float((weights * feature_block.loc[weights.index, "label"]).sum())
+            turnover = _same_sleeve_turnover(weights, previous)
+            cost = turnover * cost_bps_per_turnover / 10000.0
+            selected_adv20_sum = float(
+                pd.to_numeric(feature_block.loc[weights.index, "__adv20"], errors="coerce").sum()
+            )
+            rows.append(
+                {
+                    "trade_date": trade_date,
+                    "datetime": dt,
+                    "universe": universe,
+                    "feature": feature,
+                    "bundle": infer_bundle(feature),
+                    "label_family": family,
+                    "horizon_bars": horizon,
+                    "portfolio_variant": variant["name"],
+                    "signal_direction": "long_high" if variant["direction"] > 0 else "contrarian",
+                    "quantile": float(variant["quantile"]),
+                    "hawkes_liquidity_gate": variant["gate_mode"] == "exclude_top20",
+                    "gate_pair_id": variant["gate_pair_id"],
+                    "gate_mode": variant["gate_mode"],
+                    "execution_role": "primary" if family == "return_vwap_to_vwap" else "diagnostic",
+                    "variant_applicability": _portfolio_variant_applicability(horizon, variant_rebalance),
+                    "rebalance_minutes": variant_rebalance,
+                    "sleeve_count": sleeve_count,
+                    "sleeve_id": sleeve_id,
+                    "portfolio_accounting": "same_sleeve_turnover",
+                    "turnover_policy": "hysteresis_min_hold_signal_threshold_replacement_budget" if variant.get("turnover_controlled", False) else "full_tail_rebuild",
+                    "replacement_count": turnover_state["replacement_count"],
+                    "replacement_budget": turnover_state["replacement_budget"],
+                    "minimum_hold_retained_count": turnover_state["minimum_hold_retained_count"],
+                    "long_count": int(long_mask.sum()),
+                    "short_count": int(short_mask.sum()),
+                    "selected_count": int(len(weights)),
+                    **gate_stats,
+                    "selected_adv20_sum": selected_adv20_sum,
+                    "gross_return": gross_return,
+                    "turnover": turnover,
+                    "cost_bps_per_turnover": cost_bps_per_turnover,
+                    "cost": cost,
+                    "net_return": gross_return - cost,
+                }
+            )
+            prev_by_feature[feature][sleeve_id] = weights
+            if variant.get("turnover_controlled", False):
+                previous_signal_by_feature[feature][sleeve_id] = turnover_state["signal_percentiles"]
+                previous_hold_periods_by_feature[feature][sleeve_id] = turnover_state["hold_periods"]
+    return rows
+
+
 def staggered_portfolio_proxy(
     features: pd.DataFrame,
     labels: pd.DataFrame,
@@ -2059,6 +2358,31 @@ def staggered_portfolio_proxy(
             ],
             axis=1,
         )
+        # Each (variant, feature) stream owns its same-sleeve state and is
+        # independent of every other stream. Keep the legacy serial block
+        # below as a reference path, but use bounded parallel execution for
+        # production runs.
+        tasks = list(variants)
+        workers = min(max(1, PORTFOLIO_WORKERS), max(1, len(tasks)))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="portfolio-stream") as executor:
+            futures = [
+                executor.submit(
+                    _portfolio_variant_rows_batched,
+                    work,
+                    portfolio_features,
+                    variant,
+                    trade_date,
+                    universe,
+                    family,
+                    horizon,
+                    min_n,
+                    cost_bps_per_turnover,
+                )
+                    for variant in tasks
+                ]
+            for future in futures:
+                rows.extend(future.result())
+        continue
         for variant in variants:
             variant_rebalance = int(variant["rebalance_minutes"])
             sleeve_count = max(1, int(math.ceil(horizon / variant_rebalance)))

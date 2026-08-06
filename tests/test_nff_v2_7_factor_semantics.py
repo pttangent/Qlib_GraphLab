@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from nff_research import v2_7_launch as LAUNCH
 from nff_research import full_factor_engine as FF
@@ -46,6 +47,107 @@ def test_vectorized_ranked_ic_matches_reference_statistics() -> None:
             optimized[1][feature]["rank_ic_mean"],
             equal_nan=True,
         )
+
+
+def test_ranked_feature_matrix_ic_batch_matches_reference_statistics() -> None:
+    times = pd.date_range("2026-01-02 15:00:00", periods=5, freq="1min", tz="UTC")
+    index = pd.MultiIndex.from_product(
+        [["AAA", "BBB", "CCC", "DDD", "EEE"], times],
+        names=["instrument", "datetime"],
+    )
+    frame = pd.DataFrame(
+        {
+            "x": np.sin(np.arange(len(index), dtype="float64")),
+            "z": np.linspace(-2.0, 3.0, len(index)),
+        },
+        index=index,
+    )
+    frame.iloc[3, 0] = np.nan
+    label = pd.Series(np.cos(np.arange(len(index), dtype="float64")), index=index, name="label")
+    ranked = ATOMIC._rank_frame_by_datetime_average(frame)
+
+    reference = V24.ranked_ic_stats_once(frame, label, ["x", "z"], min_n=3)
+    optimized = ATOMIC._ranked_ic_stats_from_ranked_features_fast(
+        ranked, label, ["x", "z"], min_n=3
+    )
+    for feature in ("x", "z"):
+        for key in ("ic_minutes", "ic_count", "rank_ic_mean", "rank_ic_std", "rank_ic_positive_ratio"):
+            assert np.isclose(
+                reference[0][feature][key], optimized[0][feature][key], equal_nan=True
+            )
+        assert np.isclose(
+            reference[1][feature]["rank_ic_mean"],
+            optimized[1][feature]["rank_ic_mean"],
+            equal_nan=True,
+        )
+
+
+def test_venue_level_aggregation_uses_vectorized_dominant_share() -> None:
+    level = pd.DataFrame(
+        {
+            "__symbol": ["AAA", "AAA", "BBB"],
+            "__timestamp": pd.to_datetime(
+                ["2026-01-02 15:00:00Z"] * 3, utc=True
+            ),
+            "__venue": ["X", "Y", "X"],
+            "is_off_exchange": [False, True, False],
+            "volume": [75.0, 25.0, 0.0],
+            "flow": [3.0, -1.0, 0.0],
+            "hhi": [0.5625, 0.0625, np.nan],
+            "entropy": [0.21576, 0.34657, np.nan],
+            "off_volume": [0.0, 25.0, 0.0],
+            "lit_volume": [75.0, 0.0, 0.0],
+            "dark_flow": [0.0, -1.0, 0.0],
+            "lit_flow": [3.0, 0.0, 0.0],
+        }
+    )
+    result = ATOMIC._aggregate_venue_level(level)
+    aaa = result.loc[result["__symbol"].eq("AAA")].iloc[0]
+    assert aaa["dominant_venue_share"] == pytest.approx(0.75)
+
+
+def test_future_exact_cached_preserves_exact_timestamp_and_missing_rows() -> None:
+    times = pd.to_datetime(
+        [
+            "2026-01-02 15:00:00Z",
+            "2026-01-02 15:01:00Z",
+            "2026-01-02 15:00:00Z",
+        ],
+        utc=True,
+    )
+    index = pd.MultiIndex.from_arrays(
+        [["AAA", "AAA", "BBB"], times], names=["instrument", "datetime"]
+    )
+    frame = pd.DataFrame({"close": [10.0, 11.0, 20.0]}, index=index)
+    result = ATOMIC._future_exact_fast(frame, "close", 1)
+    assert result.iloc[0] == pytest.approx(11.0)
+    assert np.isnan(result.iloc[1])
+    assert np.isnan(result.iloc[2])
+
+
+def test_universe_alias_is_deduplicated_without_changing_mask() -> None:
+    mask = pd.Series([True, False, True], index=["a", "b", "c"])
+    masks = {
+        "all_pit_eligible": mask,
+        "own_feature_universe": mask,
+        "common_structural": pd.Series([True, False, False], index=mask.index),
+    }
+    canonical = {}
+    aliases = {}
+    for universe, universe_mask in masks.items():
+        if (
+            universe == "own_feature_universe"
+            and "all_pit_eligible" in canonical
+            and universe_mask.equals(canonical["all_pit_eligible"])
+        ):
+            aliases[universe] = "all_pit_eligible"
+            continue
+        canonical[universe] = universe_mask
+    assert list(canonical) == ["all_pit_eligible", "common_structural"]
+    assert aliases == {"own_feature_universe": "all_pit_eligible"}
+    pd.testing.assert_series_equal(
+        canonical["all_pit_eligible"], masks["own_feature_universe"]
+    )
 
 
 def test_cached_rank_frame_is_cross_sectional_not_global() -> None:
