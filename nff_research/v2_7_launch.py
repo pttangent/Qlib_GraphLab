@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Canonical launch script for the complete v2.7 campaign."""
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,16 @@ from nff_research import v2_7_runtime_hardening as HARDEN
 
 C = RUN.C
 HARDEN.install(C)
+
+_BASE_VALIDATION_SCORE = RUN.MODELS._validation_score
+
+
+def _finite_validation_score(source, predictions) -> float:
+    score = float(_BASE_VALIDATION_SCORE(source, predictions))
+    return score if math.isfinite(score) else -math.inf
+
+
+RUN.MODELS._validation_score = _finite_validation_score
 
 
 def _install_worker_command() -> None:
@@ -22,6 +33,7 @@ def _install_worker_command() -> None:
         "v2_7_atomic_campaign.py",
         "v2_7_atomic_entry.py",
         "v2_7_run.py",
+        "v2_7_launch.py",
     }
 
     def worker_command(*args: Any, **kwargs: Any) -> list[str]:
