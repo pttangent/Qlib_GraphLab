@@ -887,6 +887,174 @@ def _ranked_ic_stats_vectorized(
     return minute_out, pooled_out
 
 
+def _ranked_ic_stats_from_ranked_features(
+    ranked_features: pd.DataFrame,
+    label: pd.Series,
+    feature_columns: list[str],
+    min_n: int,
+) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]]]:
+    """Reuse a pre-ranked feature matrix for another label on the same mask."""
+    feature_count = len(feature_columns)
+    minute_values: list[list[float]] = [[] for _ in feature_columns]
+    minute_counts = np.zeros(feature_count, dtype="int64")
+    pooled_n = np.zeros(feature_count, dtype="float64")
+    pooled_sx = np.zeros(feature_count, dtype="float64")
+    pooled_sy = np.zeros(feature_count, dtype="float64")
+    pooled_sxx = np.zeros(feature_count, dtype="float64")
+    pooled_syy = np.zeros(feature_count, dtype="float64")
+    pooled_sxy = np.zeros(feature_count, dtype="float64")
+    admitted_minutes = 0
+    work = pd.concat([ranked_features[feature_columns], label.rename("__label")], axis=1)
+
+    for _, block in work.groupby(level="datetime", sort=False):
+        ranked_y = block["__label"].rank(method="average")
+        y_raw = ranked_y.to_numpy(dtype="float64")
+        y_valid = np.isfinite(y_raw)
+        if int(y_valid.sum()) < min_n:
+            continue
+        admitted_minutes += 1
+        x_raw = block[feature_columns].to_numpy(dtype="float64", copy=False)
+        valid = np.isfinite(x_raw) & y_valid[:, None]
+        n = valid.sum(axis=0).astype("float64")
+        x0 = np.where(valid, x_raw, 0.0)
+        y0 = np.where(valid, y_raw[:, None], 0.0)
+        sx = x0.sum(axis=0, dtype="float64")
+        sy = y0.sum(axis=0, dtype="float64")
+        sxx = (x0 * x0).sum(axis=0, dtype="float64")
+        syy = (y0 * y0).sum(axis=0, dtype="float64")
+        sxy = (x0 * y0).sum(axis=0, dtype="float64")
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cov = sxy - sx * sy / n
+            vx = sxx - sx * sx / n
+            vy = syy - sy * sy / n
+            corr = cov / np.sqrt(np.maximum(vx, 0.0) * np.maximum(vy, 0.0))
+        eligible = (n >= min_n) & np.isfinite(corr)
+        minute_counts += n.astype("int64")
+        for idx in np.flatnonzero(eligible):
+            minute_values[idx].append(float(corr[idx]))
+
+        label_count = int(y_valid.sum())
+        y_pooled = y_raw / float(label_count)
+        y_pooled[~y_valid] = np.nan
+        y_pooled -= np.nanmean(y_pooled)
+        feature_counts = np.isfinite(x_raw).sum(axis=0).astype("float64")
+        x_pooled = x_raw / feature_counts[None, :]
+        feature_means = np.divide(
+            np.nansum(x_pooled, axis=0),
+            feature_counts,
+            out=np.full(feature_count, np.nan, dtype="float64"),
+            where=feature_counts > 0,
+        )
+        x_pooled -= feature_means[None, :]
+        xp0 = np.where(valid, x_pooled, 0.0)
+        yp0 = np.where(valid, y_pooled[:, None], 0.0)
+        pooled_n += n
+        pooled_sx += xp0.sum(axis=0, dtype="float64")
+        pooled_sy += yp0.sum(axis=0, dtype="float64")
+        pooled_sxx += (xp0 * xp0).sum(axis=0, dtype="float64")
+        pooled_syy += (yp0 * yp0).sum(axis=0, dtype="float64")
+        pooled_sxy += (xp0 * yp0).sum(axis=0, dtype="float64")
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        pooled_cov = pooled_sxy - pooled_sx * pooled_sy / pooled_n
+        pooled_vx = pooled_sxx - pooled_sx * pooled_sx / pooled_n
+        pooled_vy = pooled_syy - pooled_sy * pooled_sy / pooled_n
+        pooled_corr = pooled_cov / np.sqrt(
+            np.maximum(pooled_vx, 0.0) * np.maximum(pooled_vy, 0.0)
+        )
+    minute_out: dict[str, dict[str, float]] = {}
+    pooled_out: dict[str, dict[str, float]] = {}
+    for idx, feature in enumerate(feature_columns):
+        values = np.asarray(minute_values[idx], dtype="float64")
+        value = float(pooled_corr[idx]) if pooled_n[idx] >= min_n and np.isfinite(pooled_corr[idx]) else math.nan
+        minute_out[feature] = {
+            "ic_minutes": int(values.size),
+            "ic_count": int(minute_counts[idx]),
+            "rank_ic_mean": float(values.mean()) if values.size else math.nan,
+            "rank_ic_std": float(values.std(ddof=1)) if values.size > 1 else math.nan,
+            "rank_ic_positive_ratio": float((values > 0).mean()) if values.size else math.nan,
+        }
+        pooled_out[feature] = {
+            "ic_minutes": admitted_minutes,
+            "ic_count": int(pooled_n[idx]),
+            "rank_ic_mean": value,
+            "rank_ic_std": math.nan,
+            "rank_ic_positive_ratio": float(value > 0) if np.isfinite(value) else math.nan,
+        }
+    return minute_out, pooled_out
+
+
+def _minute_rank_ic_summary_rank_cache(
+    features: pd.DataFrame,
+    labels: pd.DataFrame,
+    label_masks: dict[str, pd.Series],
+    controls: pd.DataFrame,
+    trade_date: str,
+    min_n: int,
+) -> tuple[pd.DataFrame, dict[tuple[str, str], tuple[pd.DataFrame, pd.Series]]]:
+    """Run the fast summary while ranking each universe mask only once."""
+    feature_columns = R.analysis_features(features)
+    decile_cache_features = [column for column in R.CORE_DECILE_FEATURES if column in feature_columns]
+    masks = R.universe_masks(features, controls)
+    rows: list[dict[str, Any]] = []
+    residual_cache: dict[tuple[str, str], tuple[pd.DataFrame, pd.Series]] = {}
+    residual_feature_cache: dict[tuple[str, str], pd.DataFrame] = {}
+
+    for universe, universe_mask in masks.items():
+        raw_rank_cache: dict[str, pd.DataFrame] = {}
+        neutral_rank_cache: dict[str, pd.DataFrame] = {}
+        for label_column in labels.columns:
+            family, horizon_text = label_column.rsplit("__h", 1)
+            horizon = int(horizon_text)
+            base_mask = (
+                universe_mask
+                & labels[label_column].notna()
+                & label_masks[label_column].fillna(False)
+            ).fillna(False)
+            if int(base_mask.sum()) < min_n:
+                continue
+            feature_frame = features.loc[base_mask, feature_columns]
+            label = labels.loc[base_mask, label_column]
+            index_key = _index_hash(feature_frame.index)
+            ranked_raw = raw_rank_cache.get(index_key)
+            if ranked_raw is None:
+                ranked_raw = feature_frame[feature_columns].rank(method="average")
+                raw_rank_cache[index_key] = ranked_raw
+            minute_stats, pooled_stats = _ranked_ic_stats_from_ranked_features(
+                ranked_raw, label, feature_columns, min_n
+            )
+            label_non_null = int(label.notna().sum())
+            coverage = feature_frame.notna().sum(axis=0) / max(1, label_non_null)
+            R.append_ic_rows(rows, minute_stats, trade_date, universe, "raw", "minute_mean_cs_rank_ic", family, horizon, coverage, label_non_null)
+            R.append_ic_rows(rows, pooled_stats, trade_date, universe, "raw", "pooled_cs_demeaned_pct_rank_ic", family, horizon, coverage, label_non_null)
+
+            if not family.startswith("return_") or universe not in {"common_structural", "liquid_common_adv20_top1000"}:
+                continue
+            controls_sub = controls.loc[base_mask]
+            residual_key = _index_hash(feature_frame.index)
+            feature_resid = residual_feature_cache.get((universe, residual_key))
+            if feature_resid is None:
+                feature_resid = R._residualize_matrix(feature_frame, controls_sub, min_n=max(min_n, 40))
+                residual_feature_cache[(universe, residual_key)] = feature_resid
+            label_resid = R._residualize_matrix(label.to_frame(label_column), controls_sub, min_n=max(min_n, 40))[label_column]
+            ranked_resid = neutral_rank_cache.get(residual_key)
+            if ranked_resid is None:
+                ranked_resid = feature_resid[feature_columns].rank(method="average")
+                neutral_rank_cache[residual_key] = ranked_resid
+            neut_minute, neut_pooled = _ranked_ic_stats_from_ranked_features(ranked_resid, label_resid, feature_columns, min_n)
+            neutral_label_non_null = int(label_resid.notna().sum())
+            neutral_coverage = feature_resid.notna().sum(axis=0) / max(1, neutral_label_non_null)
+            if family in {"return_open_to_open", "return_vwap_to_vwap"} and decile_cache_features:
+                residual_cache[(universe, label_column)] = (
+                    feature_resid[decile_cache_features].copy(deep=False), label_resid.copy(deep=False)
+                )
+            R.append_ic_rows(rows, neut_minute, trade_date, universe, "neutralized", "minute_mean_cs_rank_ic_residualized", family, horizon, neutral_coverage, neutral_label_non_null)
+            R.append_ic_rows(rows, neut_pooled, trade_date, universe, "neutralized", "pooled_cs_demeaned_pct_rank_ic_residualized", family, horizon, neutral_coverage, neutral_label_non_null)
+        raw_rank_cache.clear()
+        neutral_rank_cache.clear()
+    return pd.DataFrame(rows), residual_cache
+
+
 def _stage_cache(name: str, function: Callable[..., pd.DataFrame]) -> Callable[..., pd.DataFrame]:
     def wrapped(*args: Any, **kwargs: Any) -> pd.DataFrame:
         path = None if CTX is None else CTX.root / "stages" / f"{name}.parquet"
@@ -1181,6 +1349,9 @@ def install(config: Mapping[str, Any]) -> None:
     # module globals, so replace that hot helper explicitly after the fast
     # path has been installed.
     V26.FAST.ranked_ic_stats_once = _ranked_ic_stats_vectorized
+    R.minute_rank_ic_summary = lambda *args, **kwargs: _timed(
+        "ic_and_neutralization", _minute_rank_ic_summary_rank_cache, *args, **kwargs
+    )
     R.add_all_features = _add_all_features
     original_join_controls = R.join_daily_controls
 
