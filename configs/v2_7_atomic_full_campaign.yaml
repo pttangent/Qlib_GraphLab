@@ -1,0 +1,165 @@
+research_version: "2.7-real-schema-atomic"
+base_runner_version: "2.6-full-defined"
+
+run:
+  name: v2_7_atomic_full_defined_20260806_r1
+  script: nff_research/v2_7_atomic_entry.py
+  start_date: "2026-01-02"
+  end_date: "2026-07-22"
+  horizons: [1, 5, 15, 30, 60]
+  # Two date processes retain at most two wide daily frames. Each process uses
+  # eight shared-memory threads for factor/decile work, filling about 16 CPU
+  # slots without multiplying daily RSS sixteen times.
+  initial_parallel: 2
+  max_parallel: 3
+  min_parallel: 1
+  target_cpu_percent: 90
+  memory_high_water_percent: 78
+  memory_min_available_gb: 32
+  disk_free_floor_gb: 50
+  launch_batch_size: 1
+  retries: 3
+  min_cross_section_n: 30
+  allow_mixed_contracts: true
+
+atomic:
+  factor_block_size: 8
+  intra_date_workers: 8
+  exact_future_lookup_cache: true
+  residual_matrix_cache: true
+  vectorized_deciles: true
+  stage_checkpoints: true
+  checkpoint_contract_fields:
+    - run_contract_hash
+    - instruction_sha256
+    - date_index_hash
+    - factor_ids
+    - factor_formulas
+
+local_paths:
+  warehouse_root: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_warehouse"
+  research_root: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_research"
+  raw_1m_root: "D:/DEV/AnotherNetworkFactory/RAW_DATA/1m"
+  nodefactorfactory_src: "D:/DEV/AnotherNetworkFactory/NodeFactorFactory/src"
+  industry_metadata: "D:/DEV/AnotherNetworkFactory/warehouses/metadata/symbol_metadata.parquet"
+
+study:
+  nff_source_repository: "pttangent/NodeFactorFactory"
+  nff_source_branch: "agent/nvg-trade-hawkes-families"
+  nvg_supplement_root: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_warehouse/nvg_supplement"
+  supplement_datasets:
+    - minute_hvg_risk_raw
+    - minute_nvg_edge_raw
+    - minute_visibility_topology_raw
+    - trade_visibility_edge_raw
+    - trade_visibility_topology_raw
+  schema_resolution: "runtime parquet schema per date; no guessed field fallback"
+  directional_source_priority:
+    - nvg_supplement/minute_nvg_edge_raw
+    - feature/minute_nvg
+    - structural top-bottom fallback for coverage only
+  universe_layers:
+    - all_pit_eligible
+    - common_structural
+    - liquid_common_adv20_top500
+    - liquid_common_adv20_top1000
+    - liquid_common_adv20_top2000
+    - liquid_common_adv20_top3000
+    - final_trading_universe
+  raw_fields_inventory: true
+  derived_supplement_factor: true
+  factor_registry_mode: "all A-K prototypes expanded on actual warehouse windows plus exact NVG supplement directional consensus"
+
+labels:
+  primary_execution: return_vwap_to_vwap
+  diagnostic_execution: [return_open_to_open, return_close_to_close]
+  state_prediction:
+    - liquidity_deterioration
+    - realized_volatility
+    - fwd_abs_return
+    - fwd_mfe
+    - fwd_mae
+  diagnostic: [jump_tail_event, execution_cost_proxy]
+  exact_elapsed_minutes: true
+  entry_offset_minutes: 1
+  same_session_only: true
+
+neutralization:
+  applies_to: [return_open_to_open, return_vwap_to_vwap, return_close_to_close]
+  variants: [raw, standardized_cs_zscore, industry_neutral, industry_size_neutral, full_risk_neutral]
+  metadata_controls: [sector_code, industry_code, log_market_cap]
+  numeric_controls:
+    - log_price
+    - log_adv20
+    - log_intraday_dollar_volume
+    - active_second_ratio
+    - log_trade_count
+    - realized_volatility
+    - intraday_market_sensitivity
+    - amihud
+
+portfolio_proxy:
+  rebalance_minutes: 15
+  universe: final_trading_universe
+  primary_execution_label: return_vwap_to_vwap
+  costs_bps_one_way: [0, 1, 2.5, 5, 10]
+  participation_rates: [0.01, 0.02, 0.05, 0.10]
+  account_sizes: [100000, 500000, 1000000, 5000000, 10000000]
+  variants:
+    - long_high_q10_15m
+    - contrarian_q10_15m
+    - contrarian_q05_30m
+    - contrarian_q05_60m
+    - contrarian_q05_30m_turnover_controlled
+  turnover_controlled_variant:
+    no_trade_band_quantile: 0.10
+    minimum_hold_rebalances: 2
+    signal_change_threshold_percentile: 0.10
+    max_replacement_fraction_per_side: 0.50
+
+incremental_validation:
+  method: temporal_oos_ridge_with_train_only_feature_selection
+  folds: 5
+  ridge_alpha: 0.001
+  min_train_n: 40
+
+walk_forward:
+  train_days: 60
+  validation_days: 10
+  test_days: 10
+  step_days: 10
+  primary_model: ridge
+  models: [equal_weight, ic_weight, ridge, elastic_net, lightgbm, gru]
+  primary_horizon: 30
+  primary_label: return_vwap_to_vwap
+  train_only_direction_freeze: true
+  train_only_redundancy_filter: true
+  family_ablation: true
+
+qlib_recorder:
+  enabled: true
+  experiment_name: nff_v2_7_atomic_full_defined
+  provider_subdir: qlib_provider
+  required_artifacts:
+    - predictions
+    - labels
+    - selected_features
+    - model
+    - feature_importance
+    - ic_report
+    - decile_report
+    - turnover_report
+    - cost_report
+    - orders
+    - fills
+    - positions
+    - account
+    - risk_report
+    - manifest
+    - error_log
+
+monitoring:
+  progress_interval_seconds: 30
+  resource_sample_seconds: 30
+  stage_events: true
+  report_worker_rss: true
