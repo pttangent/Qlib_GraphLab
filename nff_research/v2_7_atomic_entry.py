@@ -103,6 +103,11 @@ def _prederive_trade_fields(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _add_all_features_with_universe_controls(frame: pd.DataFrame) -> pd.DataFrame:
+    # The base atomic builder canonicalizes its returned index. Canonicalize
+    # before retaining source columns as well, otherwise concatenating those
+    # columns back can union reversed and canonical MultiIndexes into a
+    # doubled row set and make latest-row deduplication keep NaN source rows.
+    frame = C.V26._ensure_research_index(frame)
     frame = _prederive_trade_fields(frame)
     retained = frame[[column for column in PRESERVED_SOURCE_COLUMNS if column in frame]].copy(deep=False)
     result = _BASE_ADD_ALL_FEATURES(frame)
