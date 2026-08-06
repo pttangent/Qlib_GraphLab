@@ -10,6 +10,7 @@ on:
       - "configs/v2_7_atomic_full_campaign.yaml"
       - "tests/test_nff_v2_7_schema_contract.py"
       - "tests/test_nff_v2_7_models.py"
+      - "tests/test_nff_v2_7_factor_semantics.py"
       - ".github/workflows/nff-v2-7.yml"
 
 jobs:
@@ -35,14 +36,19 @@ jobs:
             nff_research/v2_7_atomic_entry.py \
             nff_research/v2_7_deciles.py \
             nff_research/v2_7_formula_hardening.py \
+            nff_research/v2_7_formula_semantic_patch.py \
+            nff_research/v2_7_checkpoint_hardening.py \
             nff_research/v2_7_models.py \
             nff_research/v2_7_ablation.py \
             nff_research/v2_7_runtime_hardening.py \
             nff_research/v2_7_run.py \
             nff_research/v2_7_launch.py
-      - name: Real-schema contract tests
+      - name: Real-schema and semantic tests
         run: |
-          pytest -q tests/test_nff_v2_7_schema_contract.py
+          pytest -q \
+            tests/test_nff_v2_7_schema_contract.py \
+            tests/test_nff_v2_7_models.py \
+            tests/test_nff_v2_7_factor_semantics.py
       - name: Static semantic guards
         run: |
           python - <<'PY'
@@ -51,6 +57,8 @@ jobs:
           entry = Path("nff_research/v2_7_atomic_entry.py").read_text(encoding="utf-8")
           deciles = Path("nff_research/v2_7_deciles.py").read_text(encoding="utf-8")
           formulas = Path("nff_research/v2_7_formula_hardening.py").read_text(encoding="utf-8")
+          semantics = Path("nff_research/v2_7_formula_semantic_patch.py").read_text(encoding="utf-8")
+          checkpoints = Path("nff_research/v2_7_checkpoint_hardening.py").read_text(encoding="utf-8")
           models = Path("nff_research/v2_7_models.py").read_text(encoding="utf-8")
           run = Path("nff_research/v2_7_run.py").read_text(encoding="utf-8")
           hardening = Path("nff_research/v2_7_runtime_hardening.py").read_text(encoding="utf-8")
@@ -71,6 +79,10 @@ jobs:
           assert "np.searchsorted(" in deciles and 'side="left"' in deciles
           assert 'result["A14"]' in formulas and 'result["A16"]' in formulas
           assert 'k["K22"]' in formulas and 'traditional__realized_vol_5m' in formulas
+          assert 'result["B04"]' in semantics and 'result["D04"]' in semantics
+          assert 'result["E20"]' in semantics and 'result["E21"]' in semantics
+          assert "campaign.R.decile_curves = deciles_checkpointed" in checkpoints
+          assert "upstream_fingerprint" in checkpoints
           assert 'long_index = block.index[ranked >= 1.0 - quantile]' in models
           assert 'short_index = block.index[ranked <= quantile]' in models
           assert '"elastic_net"' in models and '"lightgbm"' in models and '"gru"' in models
