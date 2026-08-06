@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-"""Exact, vectorized within-minute decile aggregation.
+"""Pandas-exact, vectorized within-minute decile aggregation.
 
-Pandas qcut constructs linearly interpolated quantile edges and uses
-right-closed bins. Floating interpolation is observable for some cross-section
-sizes (for example N=91), so an algebraically simplified ceil formula is not
-byte-for-byte equivalent. We cache the exact edge vector for each N and use
-NumPy searchsorted; the expensive aggregation remains vectorized.
+Pandas ``qcut`` exposes floating interpolation details for some cross-section
+sizes (notably N=91). Reimplementing its boundaries with NumPy can differ by one
+bin even when the mathematical quantile is identical. We therefore cache the
+*actual qcut label vector* for each cross-section size and map unique integer
+ranks through that vector. The cache is built once per N; the expensive
+factor/minute aggregation remains NumPy-vectorized.
 """
 
 import math
@@ -16,21 +17,25 @@ import numpy as np
 import pandas as pd
 
 
-_QCUT_EDGE_CACHE: dict[int, np.ndarray] = {}
+_QCUT_LABEL_CACHE: dict[int, np.ndarray] = {}
 
 
-def _qcut_edges(count: int) -> np.ndarray:
+def _qcut_labels(count: int) -> np.ndarray:
     count = int(count)
-    cached = _QCUT_EDGE_CACHE.get(count)
+    cached = _QCUT_LABEL_CACHE.get(count)
     if cached is not None:
         return cached
     if count <= 1:
-        edges = np.array([1.0, 1.0], dtype="float64")
+        labels = np.ones(max(1, count), dtype="int16")
     else:
-        values = np.arange(1, count + 1, dtype="float64")
-        edges = np.quantile(values, np.linspace(0.0, 1.0, 11), method="linear")
-    _QCUT_EDGE_CACHE[count] = edges
-    return edges
+        ranks = pd.Series(np.arange(1, count + 1, dtype="float64"))
+        labels = (
+            pd.qcut(ranks, 10, labels=False, duplicates="drop")
+            .to_numpy(dtype="int16")
+            + 1
+        )
+    _QCUT_LABEL_CACHE[count] = labels
+    return labels
 
 
 def qcut_deciles_from_unique_ranks(ranks: np.ndarray, counts: np.ndarray) -> np.ndarray:
@@ -38,16 +43,18 @@ def qcut_deciles_from_unique_ranks(ranks: np.ndarray, counts: np.ndarray) -> np.
     counts = np.asarray(counts, dtype="int64")
     result = np.ones(len(ranks), dtype="int16")
     for count in np.unique(counts):
+        count_int = int(count)
         mask = counts == count
-        if int(count) <= 1:
+        if count_int <= 1:
             result[mask] = 1
             continue
-        # searchsorted over the complete edge vector returns 0 for the minimum;
-        # clipping it to one reproduces qcut(include_lowest=True) and its
-        # right-closed interval assignment for all other values.
-        result[mask] = np.searchsorted(
-            _qcut_edges(int(count)), ranks[mask], side="left"
-        ).clip(1, 10).astype("int16")
+        rank_positions = ranks[mask].astype("int64") - 1
+        if (rank_positions < 0).any() or (rank_positions >= count_int).any():
+            raise ValueError(
+                f"unique rank outside cross-section range for N={count_int}: "
+                f"min={int(rank_positions.min()) + 1}, max={int(rank_positions.max()) + 1}"
+            )
+        result[mask] = _qcut_labels(count_int)[rank_positions]
     return result
 
 
