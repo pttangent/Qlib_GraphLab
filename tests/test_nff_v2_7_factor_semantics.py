@@ -54,14 +54,19 @@ def test_trade_fast_slow_and_resonance_use_terminal_direction() -> None:
     ) - LAUNCH.C._csz(
         frame["trade_nvg__trade_price_nvg_300s_terminal_signed_edge_balance"], groups
     )
-    expected_resonance = pd.concat(
-        [
-            frame["trade_nvg__trade_price_nvg_60s_terminal_signed_edge_balance"],
-            frame["trade_nvg__trade_price_nvg_180s_terminal_signed_edge_balance"],
-            frame["trade_nvg__trade_price_nvg_300s_terminal_signed_edge_balance"],
-        ],
-        axis=1,
-    ).apply(np.sign).mean(axis=1)
+    expected_resonance = (
+        pd.concat(
+            [
+                frame["trade_nvg__trade_price_nvg_60s_terminal_signed_edge_balance"],
+                frame["trade_nvg__trade_price_nvg_180s_terminal_signed_edge_balance"],
+                frame["trade_nvg__trade_price_nvg_300s_terminal_signed_edge_balance"],
+            ],
+            axis=1,
+        )
+        .apply(np.sign)
+        .mean(axis=1)
+        .astype("float32")
+    )
     pd.testing.assert_series_equal(result["E20"], expected_fast_slow, check_names=False)
     pd.testing.assert_series_equal(result["E21"], expected_resonance, check_names=False)
 
