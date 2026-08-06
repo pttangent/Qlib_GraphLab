@@ -11,6 +11,7 @@ on:
       - "tests/test_nff_v2_7_schema_contract.py"
       - "tests/test_nff_v2_7_models.py"
       - "tests/test_nff_v2_7_factor_semantics.py"
+      - "tests/test_nff_v2_7_supplement_scope.py"
       - ".github/workflows/nff-v2-7.yml"
 
 jobs:
@@ -44,13 +45,15 @@ jobs:
             nff_research/v2_7_ablation.py \
             nff_research/v2_7_runtime_hardening.py \
             nff_research/v2_7_run.py \
-            nff_research/v2_7_launch.py
+            nff_research/v2_7_launch.py \
+            tests/test_nff_v2_7_supplement_scope.py
       - name: Real-schema and semantic tests
         run: |
           pytest -q \
             tests/test_nff_v2_7_schema_contract.py \
             tests/test_nff_v2_7_models.py \
-            tests/test_nff_v2_7_factor_semantics.py
+            tests/test_nff_v2_7_factor_semantics.py \
+            tests/test_nff_v2_7_supplement_scope.py
       - name: Static semantic guards
         run: |
           python - <<'PY'
