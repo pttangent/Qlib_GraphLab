@@ -1008,6 +1008,21 @@ def install(config: Mapping[str, Any]) -> None:
     FF.derive_all = _derive_all_checkpointed
     V26._future_exact = _future_exact_cached
     R.add_all_features = _add_all_features
+    original_join_controls = R.join_daily_controls
+
+    def join_daily_controls_canonical(
+        features: pd.DataFrame, trade_date: str, controls_path: Path
+    ) -> pd.DataFrame:
+        # A legacy/profile wrapper can return a fresh frame after the feature
+        # builder.  Canonicalize at the last shared boundary and update the
+        # caller object in place so labels, controls and later portfolio code
+        # cannot observe different index names/order or duplicate keys.
+        normalized = V26._ensure_research_index(features)
+        if normalized is not features or not normalized.index.equals(features.index):
+            features.__init__(normalized)
+        return original_join_controls(features, trade_date, controls_path)
+
+    R.join_daily_controls = join_daily_controls_canonical
     R._residualize_matrix = _residualize_cached
     R.decile_curves = _deciles_fast
     R.staggered_portfolio_proxy = _stage_cache("portfolio_proxy", R.staggered_portfolio_proxy)
