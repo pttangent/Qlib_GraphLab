@@ -932,7 +932,10 @@ def _deciles_fast(
 
 
 def _install_context(config: Mapping[str, Any]) -> None:
-    original = R.run_date
+    # Call the original v2.1 date implementation directly.  The v2.4
+    # profiling wrapper captures the pre-v2.6 label/selector functions and
+    # can otherwise silently route workers back to the legacy path.
+    original = V26.FAST._ORIGINALS.get("run_date", R.run_date)
     atomic = config.get("atomic", {}) if isinstance(config.get("atomic"), Mapping) else {}
     factor_block_size = int(atomic.get("factor_block_size", 8))
     intra_workers = int(atomic.get("intra_date_workers", 8))
