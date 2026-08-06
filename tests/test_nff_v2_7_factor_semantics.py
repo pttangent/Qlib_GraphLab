@@ -96,6 +96,17 @@ def test_full_label_builder_uses_plausible_dates_for_numeric_swapped_levels() ->
     assert normalized.index.get_level_values("datetime")[0] == times[0]
 
 
+def test_full_label_builder_detects_unnamed_string_datetime_level() -> None:
+    timestamps = ["2026-01-02 14:30:00", "2026-01-02 14:31:00"]
+    index = pd.MultiIndex.from_arrays(
+        [timestamps, ["A", "B"]],
+        names=[None, None],
+    )
+    normalized = FULL._ensure_research_index(pd.DataFrame({"x": 1.0}, index=index))
+    assert normalized.index.names == ["datetime", "instrument"]
+    assert normalized.index.get_level_values("datetime")[0] == timestamps[0]
+
+
 def test_supplement_contract_has_only_15m_and_30m() -> None:
     assert ATOMIC.SUPPLEMENT_WINDOWS == ("15m", "30m")
 

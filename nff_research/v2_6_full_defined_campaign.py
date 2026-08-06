@@ -200,6 +200,21 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
         best_rate = datetime_score(best_position)
         if best_rate < 0.9:
             if names == [None, None] and index.nlevels == 2:
+                sample_size = min(len(index), 4096)
+                sample_positions = (
+                    np.linspace(0, len(index) - 1, sample_size, dtype="int64")
+                    if len(index) > sample_size
+                    else np.arange(sample_size, dtype="int64")
+                )
+                token_rates = []
+                for position in range(index.nlevels):
+                    tokens = pd.Series(
+                        index.get_level_values(position).take(sample_positions),
+                        dtype="string",
+                    ).str.strip()
+                    token_rates.append(float(tokens.str.match(r"^(19|20)\d{2}[-/]\d{1,2}").mean()))
+                if max(token_rates) >= 0.5:
+                    return int(np.argmax(token_rates))
                 # The NFF loader's unnamed fallback contract is still
                 # instrument, datetime.  Prefer an actual datetime dtype;
                 # otherwise retain that fixed two-level order rather than
