@@ -164,16 +164,30 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
         raise TypeError(f"research frame must have a MultiIndex, got {type(index).__name__}")
     names = list(index.names)
 
-    def datetime_rate(position: int) -> float:
+    def datetime_score(position: int) -> float:
         values = index.get_level_values(position)
         if pd.api.types.is_datetime64_any_dtype(values):
             return 1.0
-        sample = pd.Series(values[: min(len(values), 2048)], dtype="object")
+        # Inspect the full level by evenly spaced samples.  A leading slice
+        # can look datetime-like while a later symbol block contains values
+        # such as ``A``; that silently mislabels the levels and breaks labels.
+        sample_size = min(len(values), 4096)
+        if len(values) > sample_size:
+            positions = np.linspace(0, len(values) - 1, sample_size, dtype="int64")
+            sampled = values.take(positions)
+        else:
+            sampled = values
+        sample = pd.Series(sampled, dtype="object")
         try:
             parsed = pd.to_datetime(sample, utc=True, errors="coerce", format="mixed")
         except (TypeError, ValueError):
             parsed = pd.to_datetime(sample, utc=True, errors="coerce")
-        return float(parsed.notna().mean()) if len(parsed) else 0.0
+        if not len(parsed):
+            return 0.0
+        plausible = parsed.notna() & parsed.ge(pd.Timestamp("2015-01-01", tz="UTC")) & parsed.lt(
+            pd.Timestamp("2035-01-01", tz="UTC")
+        )
+        return float(plausible.mean())
 
     def datetime_position() -> int:
         named_candidates = {
@@ -182,8 +196,8 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
             if name in {"datetime", "timestamp", "event_time", "decision_time"}
         }
         positions = sorted(named_candidates) + [position for position in range(index.nlevels) if position not in named_candidates]
-        best_position = max(positions, key=datetime_rate)
-        best_rate = datetime_rate(best_position)
+        best_position = max(positions, key=datetime_score)
+        best_rate = datetime_score(best_position)
         if best_rate < 0.9:
             raise KeyError(f"cannot identify datetime level from index names={names!r}")
         return best_position
