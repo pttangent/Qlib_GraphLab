@@ -108,6 +108,20 @@ def test_full_label_builder_applies_latest_collision_policy() -> None:
     assert normalized.attrs["research_index_collision_count"] == 1
 
 
+def test_future_exact_uses_canonical_instrument_datetime_order() -> None:
+    times = pd.date_range("2026-01-02 15:00:00", periods=2, freq="min", tz="UTC")
+    index = pd.MultiIndex.from_product(
+        [["AAA", "BBB"], times], names=["instrument", "datetime"]
+    )
+    frame = pd.DataFrame(
+        {"value": [10.0, 11.0, 20.0, 21.0]}, index=index
+    )
+    shifted = FULL._future_exact(frame, "value", 1)
+    assert shifted.loc[("AAA", times[0])] == 11.0
+    assert shifted.loc[("BBB", times[0])] == 21.0
+    assert pd.isna(shifted.loc[("AAA", times[1])])
+
+
 def test_full_label_builder_uses_plausible_dates_for_numeric_swapped_levels() -> None:
     times = pd.date_range("2026-01-02 14:30:00", periods=5000, freq="min", tz="UTC")
     # Numeric instrument ids can parse as Unix nanoseconds; plausibility must

@@ -154,11 +154,11 @@ def _future_exact(frame: pd.DataFrame, column: str, offset_minutes: int) -> pd.S
     times = pd.to_datetime(index.get_level_values("datetime"), utc=True)
     symbols = index.get_level_values("instrument")
     lookup_index = pd.MultiIndex.from_arrays(
-        [times + pd.Timedelta(minutes=offset_minutes), symbols],
+        [symbols, times + pd.Timedelta(minutes=offset_minutes)],
         names=index.names,
     )
     source = pd.to_numeric(frame[column], errors="coerce").copy()
-    source.index = pd.MultiIndex.from_arrays([times, symbols], names=index.names)
+    source.index = pd.MultiIndex.from_arrays([symbols, times], names=index.names)
     result = source.reindex(lookup_index)
     result.index = index
     return result
@@ -594,7 +594,7 @@ def _wrap_run_date() -> None:
         summary_path = out_dir / "factor_rank_ic_summary.parquet"
         if summary_path.exists():
             summary = pd.read_parquet(summary_path)
-            if "normalization_variant" not in summary.columns:
+            if not summary.empty and "neutralization" in summary.columns and "normalization_variant" not in summary.columns:
                 summary["normalization_variant"] = np.where(
                     summary["neutralization"].eq("none"), "raw", "neutralized"
                 )
