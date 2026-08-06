@@ -95,8 +95,9 @@ jobs:
           assert "AUTHORITATIVE_MARKDOWN" in contract
           assert "_PROTOTYPE_CONTRACT.install(_FULL_FACTOR_ENGINE)" in run
           assert "C._shift(activity, 1, frame)" in entry
-          assert "np.quantile(values, np.linspace(0.0, 1.0, 11), method=\"linear\")" in deciles
-          assert "np.searchsorted(" in deciles and 'side="left"' in deciles
+          assert "pd.qcut(ranks, 10, labels=False, duplicates=\"drop\")" in deciles
+          assert "_QCUT_LABEL_CACHE" in deciles
+          assert "pandas-qcut-label-cache-v2.7.1" in checkpoints
           assert 'result["A14"]' in formulas and 'result["A16"]' in formulas
           assert 'k["K22"]' in formulas and 'traditional__realized_vol_5m' in formulas
           assert 'result["B04"]' in semantics and 'result["D04"]' in semantics
@@ -118,6 +119,7 @@ jobs:
           assert '"elastic_net"' in models and '"lightgbm"' in models and '"gru"' in models
           assert "run_family_ablation" in run
           assert "factor_resolution.parquet" in hardening
+          assert "preinstall_factor_engine_fallback" in hardening
           assert "price_path_" in hardening and "volume_path_" in hardening
           assert "FORMULAS.install(C, HARDEN)" in launch
           assert "PHYSICAL.install(C)" in launch
