@@ -725,7 +725,13 @@ def _add_all_features(frame: pd.DataFrame) -> pd.DataFrame:
         "dominant_venue_share",
     }
     keep = [column for column in frame if column.startswith(keep_prefixes) or column in keep_exact]
-    return frame[keep].select_dtypes(include=[np.number]).replace([np.inf, -np.inf], np.nan).astype("float32")
+    # The v2.7 installer replaces the v2.6 builder, so canonicalize here as
+    # well.  Otherwise labels see a repaired local frame while controls and
+    # portfolio stages still receive the original unnamed/reversed index.
+    result = frame[keep].select_dtypes(include=[np.number]).replace(
+        [np.inf, -np.inf], np.nan
+    ).astype("float32")
+    return V26._ensure_research_index(result)
 
 
 def _future_exact_cached(frame: pd.DataFrame, column: str, offset_minutes: int) -> pd.Series:
