@@ -199,6 +199,15 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
         best_position = max(positions, key=datetime_score)
         best_rate = datetime_score(best_position)
         if best_rate < 0.9:
+            if names == [None, None] and index.nlevels == 2:
+                # The NFF loader's unnamed fallback contract is still
+                # instrument, datetime.  Prefer an actual datetime dtype;
+                # otherwise retain that fixed two-level order rather than
+                # failing after a concat has stripped only the names.
+                for position in range(index.nlevels):
+                    if pd.api.types.is_datetime64_any_dtype(index.get_level_values(position)):
+                        return position
+                return 1
             raise KeyError(f"cannot identify datetime level from index names={names!r}")
         return best_position
 
