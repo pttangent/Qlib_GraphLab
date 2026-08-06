@@ -34,7 +34,9 @@ jobs:
             nff_research/v2_7_atomic_entry.py \
             nff_research/v2_7_models.py \
             nff_research/v2_7_ablation.py \
-            nff_research/v2_7_run.py
+            nff_research/v2_7_runtime_hardening.py \
+            nff_research/v2_7_run.py \
+            nff_research/v2_7_launch.py
       - name: Real-schema contract tests
         run: |
           pytest -q tests/test_nff_v2_7_schema_contract.py
@@ -46,6 +48,8 @@ jobs:
           entry = Path("nff_research/v2_7_atomic_entry.py").read_text(encoding="utf-8")
           models = Path("nff_research/v2_7_models.py").read_text(encoding="utf-8")
           run = Path("nff_research/v2_7_run.py").read_text(encoding="utf-8")
+          hardening = Path("nff_research/v2_7_runtime_hardening.py").read_text(encoding="utf-8")
+          launch = Path("nff_research/v2_7_launch.py").read_text(encoding="utf-8")
           required = {
               "real directional supplement": "minute_nvg_edge_raw",
               "factor block checkpoint": "factor_block_size",
@@ -64,4 +68,7 @@ jobs:
           assert 'short_index = block.index[ranked <= quantile]' in models
           assert '"elastic_net"' in models and '"lightgbm"' in models and '"gru"' in models
           assert "run_family_ablation" in run
+          assert "factor_resolution.parquet" in hardening
+          assert "price_path_" in hardening and "volume_path_" in hardening
+          assert "HARDEN.install(C)" in launch
           PY
