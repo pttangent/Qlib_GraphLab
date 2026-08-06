@@ -8,10 +8,13 @@ on:
       - "tests/test_nff_research_v2_2.py"
       - "tests/test_nff_research_v2_4_fastpath.py"
       - "tests/test_nff_research_v2_4_entry.py"
+      - "tests/test_nff_v2_7_schema_contract.py"
+      - "tests/test_nff_v2_7_models.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
       - "configs/v2_1_neutralized_full.yaml"
       - "configs/v2_4_optimized_full.yaml"
+      - "configs/v2_7_atomic_full_campaign.yaml"
       - "nff_research/**"
       - "docs/component/nff_adapter.md"
       - ".github/workflows/nff-adapter.yml"
@@ -27,10 +30,13 @@ on:
       - "tests/test_nff_research_v2_2.py"
       - "tests/test_nff_research_v2_4_fastpath.py"
       - "tests/test_nff_research_v2_4_entry.py"
+      - "tests/test_nff_v2_7_schema_contract.py"
+      - "tests/test_nff_v2_7_models.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
       - "configs/v2_1_neutralized_full.yaml"
       - "configs/v2_4_optimized_full.yaml"
+      - "configs/v2_7_atomic_full_campaign.yaml"
       - "nff_research/**"
       - ".github/workflows/nff-adapter.yml"
 
@@ -61,6 +67,7 @@ jobs:
           tests/test_nff_research_v2_4_fastpath.py
           tests/test_nff_research_v2_4_entry.py
           tests/test_nff_v2_7_schema_contract.py
+          tests/test_nff_v2_7_models.py
           --tb=short
       - name: Compile executable research entrypoints
         run: >-
@@ -72,6 +79,7 @@ jobs:
           tests/test_nff_research_v2_4_fastpath.py
           tests/test_nff_research_v2_4_entry.py
           tests/test_nff_v2_7_schema_contract.py
+          tests/test_nff_v2_7_models.py
           nff_research/v2_multilabel_runner.py
           nff_research/v2_1_neutralized_runner.py
           nff_research/v2_4_optimized_runner.py
