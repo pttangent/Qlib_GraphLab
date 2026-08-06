@@ -235,12 +235,18 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
         ),
         next(position for position in range(index.nlevels) if position != dt_position),
     )
-    names[dt_position] = "datetime"
-    names[instrument_position] = "instrument"
-    if names == list(index.names):
+    # The loader contract is canonical `(instrument, datetime)`.  Renaming
+    # levels without reordering them is unsafe: a concat can leave symbol
+    # values in a level still named `datetime`, which fails later during
+    # exact-time label joins.  Reorder from content-detected positions first,
+    # then apply the canonical names.
+    desired_positions = [instrument_position, dt_position]
+    canonical_names = ["instrument", "datetime"]
+    if desired_positions == list(range(index.nlevels)) and list(index.names) == canonical_names:
         return frame
     normalized = frame.copy(deep=False)
-    normalized.index = index.set_names(names)
+    normalized_index = index.reorder_levels(desired_positions)
+    normalized.index = normalized_index.set_names(canonical_names)
     return normalized
 
 
