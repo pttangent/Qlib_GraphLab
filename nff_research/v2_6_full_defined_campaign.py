@@ -165,7 +165,10 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
     names = list(index.names)
 
     def datetime_score(position: int) -> float:
-        values = index.get_level_values(position)
+        # Score unique level values rather than a row sample.  A symbol-major
+        # frame can otherwise make a mixed or swapped level look datetime-like
+        # for the sampled rows while leaving symbol values in the named level.
+        values = index.levels[position] if isinstance(index, pd.MultiIndex) else index.get_level_values(position)
         if pd.api.types.is_datetime64_any_dtype(values):
             return 1.0
         # Inspect the full level by evenly spaced samples.  A leading slice
@@ -242,11 +245,27 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
     # then apply the canonical names.
     desired_positions = [instrument_position, dt_position]
     canonical_names = ["instrument", "datetime"]
-    if desired_positions == list(range(index.nlevels)) and list(index.names) == canonical_names:
-        return frame
-    normalized = frame.copy(deep=False)
-    normalized_index = index.reorder_levels(desired_positions)
+    already_canonical = (
+        desired_positions == list(range(index.nlevels))
+        and list(index.names) == canonical_names
+    )
+    normalized = frame if already_canonical else frame.copy(deep=False)
+    normalized_index = index if already_canonical else index.reorder_levels(desired_positions)
     normalized.index = normalized_index.set_names(canonical_names)
+    parsed_datetime = pd.to_datetime(
+        normalized.index.get_level_values("datetime"), utc=True, errors="coerce"
+    )
+    parse_rate = float(parsed_datetime.notna().mean()) if len(parsed_datetime) else 0.0
+    if parse_rate < 0.9:
+        samples = [
+            list(normalized.index.get_level_values(position)[:5])
+            for position in range(normalized.index.nlevels)
+        ]
+        raise ValueError(
+            "research index normalization produced an invalid datetime level: "
+            f"names={list(normalized.index.names)!r}, parse_rate={parse_rate:.4f}, "
+            f"level_samples={samples!r}"
+        )
     return normalized
 
 
