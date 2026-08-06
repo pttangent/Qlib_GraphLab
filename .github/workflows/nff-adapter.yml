@@ -10,6 +10,7 @@ on:
       - "tests/test_nff_research_v2_4_entry.py"
       - "tests/test_nff_v2_7_schema_contract.py"
       - "tests/test_nff_v2_7_models.py"
+      - "tests/test_nff_v2_7_factor_semantics.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
       - "configs/v2_1_neutralized_full.yaml"
@@ -32,6 +33,7 @@ on:
       - "tests/test_nff_research_v2_4_entry.py"
       - "tests/test_nff_v2_7_schema_contract.py"
       - "tests/test_nff_v2_7_models.py"
+      - "tests/test_nff_v2_7_factor_semantics.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
       - "configs/v2_1_neutralized_full.yaml"
@@ -68,6 +70,7 @@ jobs:
           tests/test_nff_research_v2_4_entry.py
           tests/test_nff_v2_7_schema_contract.py
           tests/test_nff_v2_7_models.py
+          tests/test_nff_v2_7_factor_semantics.py
           --tb=short
       - name: Compile executable research entrypoints
         run: >-
@@ -80,6 +83,7 @@ jobs:
           tests/test_nff_research_v2_4_entry.py
           tests/test_nff_v2_7_schema_contract.py
           tests/test_nff_v2_7_models.py
+          tests/test_nff_v2_7_factor_semantics.py
           nff_research/v2_multilabel_runner.py
           nff_research/v2_1_neutralized_runner.py
           nff_research/v2_4_optimized_runner.py
@@ -87,6 +91,11 @@ jobs:
           nff_research/nff_schema_contract.py
           nff_research/v2_7_atomic_campaign.py
           nff_research/v2_7_atomic_entry.py
+          nff_research/v2_7_deciles.py
+          nff_research/v2_7_formula_hardening.py
+          nff_research/v2_7_formula_semantic_patch.py
+          nff_research/v2_7_checkpoint_hardening.py
+          nff_research/v2_7_physical_contract.py
           nff_research/v2_7_models.py
           nff_research/v2_7_ablation.py
           nff_research/v2_7_runtime_hardening.py
