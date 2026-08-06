@@ -15,12 +15,20 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from nff_research import v2_7_deciles as DECILES
+from nff_research import v2_7_formula_hardening as FORMULAS
 from nff_research import v2_7_run as RUN
 from nff_research import v2_7_runtime_hardening as HARDEN
 
 
 C = RUN.C
 HARDEN.install(C)
+# The formula-hardening module is written against the mathematical helpers in
+# the underlying factor engine. Bind them explicitly on the campaign namespace
+# so parent and detached workers share the same implementation.
+C._csr = C.FF._csr
+C._conf = C.FF._conf
+C._same = C.FF._same
+FORMULAS.install(C, HARDEN)
 
 _BASE_VALIDATION_SCORE = RUN.MODELS._validation_score
 _BASE_CONFIGURE_REGISTRY = C.configure_registry
