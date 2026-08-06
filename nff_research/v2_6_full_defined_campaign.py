@@ -193,6 +193,13 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
         return float(plausible.mean())
 
     def datetime_position() -> int:
+        dtype_candidates = [
+            position
+            for position in range(index.nlevels)
+            if pd.api.types.is_datetime64_any_dtype(index.get_level_values(position))
+        ]
+        if len(dtype_candidates) == 1:
+            return dtype_candidates[0]
         named_candidates = {
             position
             for position, name in enumerate(names)
