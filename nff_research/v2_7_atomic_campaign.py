@@ -496,6 +496,60 @@ def _csz(series: pd.Series, groups: pd.Index) -> pd.Series:
     return (clipped - median) / (1.4826 * mad + EPS)
 
 
+def _checkpoint_supplement_factors(
+    frame: pd.DataFrame, generated: dict[str, pd.Series]
+) -> dict[str, pd.Series]:
+    """Persist and reuse the two S factors so progress reaches all 464 fields."""
+    if CTX is None:
+        return generated
+    result = dict(generated)
+    for name, value in list(generated.items()):
+        window = name.rsplit("__w", 1)[-1]
+        root = CTX.root / "factors" / "family=S" / f"window={window}"
+        contract = _hash(
+            {
+                "version": VERSION,
+                "run_contract": CTX.contract_hash,
+                "index": _index_hash(frame.index),
+                "instruction": FF.instruction_hash(),
+                "factor": name,
+            }
+        )
+        manifest_path = root / "manifest.json"
+        block_path = root / "block=000.parquet"
+        if manifest_path.exists() and block_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                cached = pd.read_parquet(block_path)
+                if (
+                    manifest.get("status") == "complete"
+                    and manifest.get("contract_hash") == contract
+                    and cached.index.equals(frame.index)
+                    and name in cached.columns
+                ):
+                    cached.index = frame.index
+                    result[name] = cached[name].astype("float32")
+                    _event("factor_block", "reused", family="S", window=window, factors=1)
+                    continue
+            except Exception:
+                pass
+        part = value.to_frame(name=name)
+        part.index = frame.index
+        _atomic_parquet(part, block_path)
+        _atomic_json(
+            manifest_path,
+            {
+                "status": "complete",
+                "contract_hash": contract,
+                "family": "S",
+                "window": window,
+                "blocks": [{"path": block_path.name, "columns": [name]}],
+            },
+        )
+        _event("factor_block", "complete", family="S", window=window, factors=1)
+    return result
+
+
 def _supplement_direction(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, dict[str, Any]]]:
     groups = frame.index.get_level_values("datetime")
     generated: dict[str, pd.Series] = {}
@@ -541,6 +595,7 @@ def _supplement_direction(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, 
         runtime[name] = {"status": "SUCCESS" if rate > 0 else "LOW_COVERAGE", "non_null_rate": rate}
     if not generated:
         return frame, runtime
+    generated = _checkpoint_supplement_factors(frame, generated)
     block = pd.concat(generated, axis=1, copy=False)
     block.columns = list(generated)
     return pd.concat([frame, block], axis=1, copy=False), runtime
