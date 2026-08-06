@@ -184,7 +184,7 @@ def install(campaign: Any) -> None:
                                 "variant": variant,
                                 "factors": selected,
                                 "min_n": min_n,
-                                "decile_kernel": "pandas-qcut-edge-cache-v2.7",
+                                "decile_kernel": "pandas-qcut-label-cache-v2.7.1",
                             }
                         )
                         path = variant_root / f"block={block_id:03d}.parquet"
