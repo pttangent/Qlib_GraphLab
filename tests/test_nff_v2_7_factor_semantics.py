@@ -100,6 +100,27 @@ def test_supplement_contract_has_only_15m_and_30m() -> None:
     assert ATOMIC.SUPPLEMENT_WINDOWS == ("15m", "30m")
 
 
+def test_supplement_direction_preserves_named_research_index() -> None:
+    index = _cross_section(
+        {
+            "price_nvg_15m_terminal_signed_edge_balance": [-1, -0.5, 0, 0.5, 1],
+            "price_nvg_30m_terminal_signed_edge_balance": [-1, -0.5, 0, 0.5, 1],
+        }
+    ).index
+    frame = pd.DataFrame(index=index)
+    for window in (15, 30):
+        frame[f"price_nvg_{window}m_terminal_long_edge_signed_slope"] = np.linspace(-1, 1, len(index))
+        frame[f"price_detrended_nvg_{window}m_terminal_signed_edge_balance"] = np.linspace(1, -1, len(index))
+        frame[f"price_detrended_nvg_{window}m_terminal_long_edge_signed_slope"] = np.linspace(-0.5, 0.5, len(index))
+    previous_context = ATOMIC.CTX
+    try:
+        ATOMIC.CTX = None
+        result, _ = ATOMIC._supplement_direction(frame)
+        assert result.index.names == ["instrument", "datetime"]
+    finally:
+        ATOMIC.CTX = previous_context
+
+
 def test_b04_uses_long_direction_not_long_edge_ratio() -> None:
     frame = _cross_section(
         {

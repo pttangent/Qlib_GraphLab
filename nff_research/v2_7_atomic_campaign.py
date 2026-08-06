@@ -615,7 +615,12 @@ def _supplement_direction(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, 
     generated = _checkpoint_supplement_factors(frame, generated)
     block = pd.concat(generated, axis=1, copy=False)
     block.columns = list(generated)
-    return pd.concat([frame, block], axis=1, copy=False), runtime
+    result = pd.concat([frame, block], axis=1, copy=False)
+    # Concatenating an unnamed checkpoint block can clear MultiIndex level
+    # names even when values and row order are unchanged. Restore the live
+    # loader index contract before label construction.
+    result.index = frame.index
+    return result, runtime
 
 
 def _merge_venue_exact(frame: pd.DataFrame, warehouse_root: Path) -> pd.DataFrame:
