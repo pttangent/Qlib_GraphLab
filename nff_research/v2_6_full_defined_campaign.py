@@ -67,6 +67,7 @@ SUPPLEMENT_SPECS = pd.DataFrame(
 )
 SPEC_REGISTRY = pd.concat([SPEC_REGISTRY, SUPPLEMENT_SPECS], ignore_index=True)
 RUNTIME_FACTOR_STATUS: dict[str, dict[str, Any]] = {}
+LAST_LABEL_AUDIT: dict[str, Any] = {}
 
 
 def _source_columns_optional(kind: str, dataset: str, schema: str) -> list[str]:
@@ -368,7 +369,23 @@ def _full_build_labels_and_masks(frame: pd.DataFrame, horizons: list[int]):
     future minutes. Missing minutes therefore invalidate the corresponding
     label instead of silently stretching the horizon.
     """
+    global LAST_LABEL_AUDIT
+    raw_index = frame.index
     frame = _ensure_research_index(frame)
+    raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors="coerce")
+    normalized_times = pd.to_datetime(frame.index.get_level_values("datetime"), utc=True, errors="coerce")
+    audit: dict[str, Any] = {
+        "raw_index_names": list(raw_index.names),
+        "raw_index_length": int(len(raw_index)),
+        "raw_index_head": [list(value) for value in raw_index[:3].tolist()],
+        "raw_level0_parse_rate": float(raw_times.notna().mean()) if len(raw_times) else 0.0,
+        "normalized_index_names": list(frame.index.names),
+        "normalized_index_length": int(len(frame.index)),
+        "normalized_index_head": [list(value) for value in frame.index[:3].tolist()],
+        "normalized_datetime_min": str(normalized_times.min()) if len(normalized_times) else None,
+        "normalized_datetime_max": str(normalized_times.max()) if len(normalized_times) else None,
+        "close_non_null": int(pd.to_numeric(frame["bars_1m__close"], errors="coerce").notna().sum()),
+    }
     labels = pd.DataFrame(index=frame.index)
     masks: dict[str, pd.Series] = {}
     close_col = "bars_1m__close"
@@ -383,6 +400,9 @@ def _full_build_labels_and_masks(frame: pd.DataFrame, horizons: list[int]):
     current_close = pd.to_numeric(frame[close_col], errors="coerce").replace(0, np.nan)
     for horizon in sorted(set(int(value) for value in horizons)):
         session_valid = _session_valid(frame.index, horizon)
+        if horizon == min(int(value) for value in horizons):
+            audit["session_valid_first_horizon"] = int(session_valid.sum())
+            audit["future_close_first_horizon"] = int(_future_exact(frame, close_col, 1).notna().sum())
         entry_open = _future_exact(frame, open_col, 1).replace(0, np.nan)
         entry_vwap = _future_exact(frame, vwap_col, 1).replace(0, np.nan)
         entry_close = _future_exact(frame, close_col, 1).replace(0, np.nan)
@@ -482,7 +502,10 @@ def _full_build_labels_and_masks(frame: pd.DataFrame, horizons: list[int]):
         labels[cost_name] = (sum_cost / max(horizon, 1)).where(cost_valid)
         masks[cost_name] = cost_valid.astype("boolean")
 
-    return labels.replace([np.inf, -np.inf], np.nan).astype("float32"), masks
+    labels = labels.replace([np.inf, -np.inf], np.nan).astype("float32")
+    audit["label_non_null"] = {str(column): int(labels[column].notna().sum()) for column in labels.columns}
+    LAST_LABEL_AUDIT = audit
+    return labels, masks
 
 
 def _full_feature_registry(features: pd.DataFrame, evaluated: list[str], trade_date: str) -> pd.DataFrame:
@@ -591,6 +614,10 @@ def _wrap_run_date() -> None:
         # the full 184-prototype/expanded-spec rows even when unavailable.
         specs.to_parquet(out_dir / "factor_spec_registry.parquet", index=False)
         specs.to_csv(out_dir / "factor_spec_registry.csv", index=False)
+        (out_dir / "label_index_audit.json").write_text(
+            json.dumps(LAST_LABEL_AUDIT, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
         summary_path = out_dir / "factor_rank_ic_summary.parquet"
         if summary_path.exists():
             summary = pd.read_parquet(summary_path)
