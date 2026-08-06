@@ -1,0 +1,55 @@
+name: NFF v2.7 atomic fastpath
+
+on:
+  push:
+    branches:
+      - agent/nff-research-atomic-fastpath-v2-7
+  pull_request:
+    paths:
+      - "nff_research/**"
+      - "configs/v2_7_atomic_full_campaign.yaml"
+      - "tests/test_nff_v2_7_schema_contract.py"
+      - ".github/workflows/nff-v2-7.yml"
+
+jobs:
+  targeted-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install targeted dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pandas pyarrow pyyaml pytest
+      - name: Syntax check v2.7 modules
+        run: |
+          python -m py_compile \
+            nff_research/nff_schema_contract.py \
+            nff_research/v2_7_atomic_campaign.py \
+            nff_research/v2_7_atomic_entry.py
+      - name: Real-schema contract tests
+        run: |
+          pytest -q tests/test_nff_v2_7_schema_contract.py
+      - name: Static semantic guards
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path("nff_research/v2_7_atomic_campaign.py").read_text(encoding="utf-8")
+          entry = Path("nff_research/v2_7_atomic_entry.py").read_text(encoding="utf-8")
+          required = {
+              "real directional supplement": "minute_nvg_edge_raw",
+              "factor block checkpoint": "factor_block_size",
+              "future lookup cache": "FUTURE_CACHE",
+              "true venue HHI": "level[\"hhi\"] = share.pow(2)",
+              "effective duration correction": 'result["H23"] = duration',
+              "large trade direction correction": 'result["I06"]',
+              "vectorized deciles": "np.bincount",
+          }
+          for label, token in required.items():
+              assert token in source, f"missing semantic guard: {label}"
+          assert "C._shift(activity, 1, frame)" in entry
+          assert "full_factor__s01__w30m" in entry
+          PY
