@@ -1029,17 +1029,23 @@ def _minute_rank_ic_summary_rank_cache(
     trade_date: str,
     min_n: int,
 ) -> tuple[pd.DataFrame, dict[tuple[str, str], tuple[pd.DataFrame, pd.Series]]]:
-    """Run the fast summary while ranking each universe mask only once."""
+    """Run the fast summary while ranking each universe mask only once.
+
+    Universes are independent at this stage. Running them concurrently keeps
+    the exact per-universe mask and residualization contracts while avoiding a
+    long single-threaded IC pass over all 464 executable factors.
+    """
     feature_columns = R.analysis_features(features)
     decile_cache_features = [column for column in R.CORE_DECILE_FEATURES if column in feature_columns]
     masks = R.universe_masks(features, controls)
-    rows: list[dict[str, Any]] = []
-    residual_cache: dict[tuple[str, str], tuple[pd.DataFrame, pd.Series]] = {}
-    residual_feature_cache: dict[tuple[str, str], pd.DataFrame] = {}
-
-    for universe, universe_mask in masks.items():
+    def _process_universe(
+        universe: str, universe_mask: pd.Series
+    ) -> tuple[list[dict[str, Any]], dict[tuple[str, str], tuple[pd.DataFrame, pd.Series]]]:
+        universe_rows: list[dict[str, Any]] = []
+        universe_residual_cache: dict[tuple[str, str], tuple[pd.DataFrame, pd.Series]] = {}
         raw_rank_cache: dict[str, pd.DataFrame] = {}
         neutral_rank_cache: dict[str, pd.DataFrame] = {}
+        residual_feature_cache: dict[tuple[str, str], pd.DataFrame] = {}
         for label_column in labels.columns:
             family, horizon_text = label_column.rsplit("__h", 1)
             horizon = int(horizon_text)
@@ -1062,8 +1068,8 @@ def _minute_rank_ic_summary_rank_cache(
             )
             label_non_null = int(label.notna().sum())
             coverage = feature_frame.notna().sum(axis=0) / max(1, label_non_null)
-            R.append_ic_rows(rows, minute_stats, trade_date, universe, "raw", "minute_mean_cs_rank_ic", family, horizon, coverage, label_non_null)
-            R.append_ic_rows(rows, pooled_stats, trade_date, universe, "raw", "pooled_cs_demeaned_pct_rank_ic", family, horizon, coverage, label_non_null)
+            R.append_ic_rows(universe_rows, minute_stats, trade_date, universe, "raw", "minute_mean_cs_rank_ic", family, horizon, coverage, label_non_null)
+            R.append_ic_rows(universe_rows, pooled_stats, trade_date, universe, "raw", "pooled_cs_demeaned_pct_rank_ic", family, horizon, coverage, label_non_null)
 
             if not family.startswith("return_") or universe not in {"common_structural", "liquid_common_adv20_top1000"}:
                 continue
@@ -1082,13 +1088,28 @@ def _minute_rank_ic_summary_rank_cache(
             neutral_label_non_null = int(label_resid.notna().sum())
             neutral_coverage = feature_resid.notna().sum(axis=0) / max(1, neutral_label_non_null)
             if family in {"return_open_to_open", "return_vwap_to_vwap"} and decile_cache_features:
-                residual_cache[(universe, label_column)] = (
+                universe_residual_cache[(universe, label_column)] = (
                     feature_resid[decile_cache_features].copy(deep=False), label_resid.copy(deep=False)
                 )
-            R.append_ic_rows(rows, neut_minute, trade_date, universe, "neutralized", "minute_mean_cs_rank_ic_residualized", family, horizon, neutral_coverage, neutral_label_non_null)
-            R.append_ic_rows(rows, neut_pooled, trade_date, universe, "neutralized", "pooled_cs_demeaned_pct_rank_ic_residualized", family, horizon, neutral_coverage, neutral_label_non_null)
+            R.append_ic_rows(universe_rows, neut_minute, trade_date, universe, "neutralized", "minute_mean_cs_rank_ic_residualized", family, horizon, neutral_coverage, neutral_label_non_null)
+            R.append_ic_rows(universe_rows, neut_pooled, trade_date, universe, "neutralized", "pooled_cs_demeaned_pct_rank_ic_residualized", family, horizon, neutral_coverage, neutral_label_non_null)
         raw_rank_cache.clear()
         neutral_rank_cache.clear()
+        residual_feature_cache.clear()
+        return universe_rows, universe_residual_cache
+
+    rows: list[dict[str, Any]] = []
+    residual_cache: dict[tuple[str, str], tuple[pd.DataFrame, pd.Series]] = {}
+    max_workers = min(3, max(1, len(masks)))
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ic-universe") as executor:
+        futures = [
+            executor.submit(_process_universe, universe, universe_mask)
+            for universe, universe_mask in masks.items()
+        ]
+        for future in futures:
+            universe_rows, universe_cache = future.result()
+            rows.extend(universe_rows)
+            residual_cache.update(universe_cache)
     return pd.DataFrame(rows), residual_cache
 
 
