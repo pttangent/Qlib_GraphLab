@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from nff_research import v2_7_deciles as DECILES
+from nff_research import v2_7_launch as LAUNCH
 from nff_research import v2_7_models as MODELS
 from nff_research import v2_7_runtime_hardening as HARDEN
 
@@ -60,7 +61,7 @@ def test_vectorized_deciles_match_qcut_unique_rank_counts() -> None:
     assert actual.to_dict() == expected.to_dict()
 
 
-def test_closed_form_deciles_match_qcut_for_many_cross_section_sizes() -> None:
+def test_cached_quantile_edges_match_qcut_for_many_cross_section_sizes() -> None:
     for count in range(10, 101):
         ranks = np.arange(1, count + 1, dtype="float64")
         actual = DECILES.qcut_deciles_from_unique_ranks(ranks, np.full(count, count))
@@ -87,3 +88,34 @@ def test_path_metrics_are_causal_and_window_local() -> None:
         pd.testing.assert_series_equal(first[metric].iloc[:-1], second[metric].iloc[:-1])
     assert np.isclose(float(first["signed_change"].iloc[3]), 3.0)
     assert np.isclose(float(first["efficiency"].iloc[3]), 1.0)
+
+
+def test_registry_preserves_474_plus_two_contract(monkeypatch) -> None:
+    monkeypatch.setattr(LAUNCH, "_BASE_CONFIGURE_REGISTRY", lambda config: None)
+    LAUNCH._configure_476_registry({"factor_resolution_policy": {}})
+    registry = LAUNCH.C.V26.SPEC_REGISTRY
+    assert len(registry) == 476
+    assert not registry["window"].eq("10m").any()
+    assert set(registry.loc[registry["family"].eq("A"), "window"]) == {"15m", "30m", "60m"}
+    assert set(registry.loc[registry["family"].eq("B"), "window"]) == {"15m", "30m", "60m"}
+    assert set(registry.loc[registry["family"].eq("C"), "window"]) == {"15m", "30m", "60m", "120m"}
+    assert set(registry.loc[registry["family"].eq("S"), "window"]) == {"15m", "30m"}
+
+
+def test_multiscale_a14_to_a16_use_15_30_60() -> None:
+    instruments = ["AAA", "BBB", "CCC"]
+    index = _minute_index(instruments)
+    frame = pd.DataFrame(
+        {
+            "traditional__momentum_15m": [0.1, -0.2, 0.3],
+            "traditional__momentum_30m": [0.2, -0.1, 0.1],
+            "traditional__momentum_60m": [0.3, -0.3, -0.1],
+        },
+        index=index,
+    )
+    result = LAUNCH.C._correct_family(frame, {}, "A", "15m")
+    assert result["A14"].notna().all()
+    assert result["A15"].notna().all()
+    assert result["A16"].notna().all()
+    expected_resonance = pd.Series([1.0, -1.0, 1.0 / 3.0], index=index)
+    pd.testing.assert_series_equal(result["A14"], expected_resonance, check_names=False)
