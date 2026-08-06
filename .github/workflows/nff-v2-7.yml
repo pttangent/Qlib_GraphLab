@@ -39,6 +39,7 @@ jobs:
             nff_research/v2_7_formula_semantic_patch.py \
             nff_research/v2_7_checkpoint_hardening.py \
             nff_research/v2_7_physical_contract.py \
+            nff_research/v2_7_supplement_scope.py \
             nff_research/v2_7_models.py \
             nff_research/v2_7_ablation.py \
             nff_research/v2_7_runtime_hardening.py \
@@ -61,6 +62,7 @@ jobs:
           semantics = Path("nff_research/v2_7_formula_semantic_patch.py").read_text(encoding="utf-8")
           checkpoints = Path("nff_research/v2_7_checkpoint_hardening.py").read_text(encoding="utf-8")
           physical = Path("nff_research/v2_7_physical_contract.py").read_text(encoding="utf-8")
+          supplement_scope = Path("nff_research/v2_7_supplement_scope.py").read_text(encoding="utf-8")
           models = Path("nff_research/v2_7_models.py").read_text(encoding="utf-8")
           run = Path("nff_research/v2_7_run.py").read_text(encoding="utf-8")
           hardening = Path("nff_research/v2_7_runtime_hardening.py").read_text(encoding="utf-8")
@@ -90,6 +92,8 @@ jobs:
           assert '"C": ("10m", "15m", "30m")' in physical
           assert '"G": ("15m", "30m", "60m")' in physical
           assert "legacy_contract_gap.json" in physical
+          assert "generated - allowed" in supplement_scope
+          assert "allowed_s_factors" in supplement_scope
           assert 'long_index = block.index[ranked >= 1.0 - quantile]' in models
           assert 'short_index = block.index[ranked <= quantile]' in models
           assert '"elastic_net"' in models and '"lightgbm"' in models and '"gru"' in models
@@ -98,5 +102,6 @@ jobs:
           assert "price_path_" in hardening and "volume_path_" in hardening
           assert "FORMULAS.install(C, HARDEN)" in launch
           assert "PHYSICAL.install(C)" in launch
+          assert "SUPPLEMENT_SCOPE.install(C)" in launch
           assert "C._decile_feature_rows = _exact_decile_feature_rows" in launch
           PY
