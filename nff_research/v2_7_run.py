@@ -1,0 +1,113 @@
+from __future__ import annotations
+
+"""Canonical v2.7 entrypoint.
+
+Every detached date worker must execute this file so that the real-schema,
+qcut-equivalent, universe and multi-model patches are installed in both the
+parent scheduler and child processes.
+"""
+
+import json
+from pathlib import Path
+from typing import Any
+
+from nff_research import v2_7_atomic_entry as ENTRY
+from nff_research import v2_7_models as MODELS
+
+
+C = ENTRY.C
+C.BASE.run_temporal_oos = MODELS.run_temporal_oos_multi
+
+
+def _install_worker_command() -> None:
+    original = C.R.worker_command
+    current = str(Path(__file__).resolve())
+    known_scripts = {
+        str(Path(C.R.__file__).resolve()),
+        str(Path(C.V26.__file__).resolve()),
+        str(Path(C.__file__).resolve()),
+        str(Path(ENTRY.__file__).resolve()),
+    }
+
+    def worker_command(*args: Any, **kwargs: Any) -> list[str]:
+        command = original(*args, **kwargs)
+        replaced = False
+        result: list[str] = []
+        for value in command:
+            if value in known_scripts or Path(value).name in {
+                "v2_1_neutralized_runner.py",
+                "v2_6_full_defined_campaign.py",
+                "v2_7_atomic_campaign.py",
+                "v2_7_atomic_entry.py",
+            }:
+                result.append(current)
+                replaced = True
+            else:
+                result.append(value)
+        if not replaced:
+            raise RuntimeError(f"worker command has no replaceable research entrypoint: {command}")
+        return result
+
+    C.R.worker_command = worker_command
+
+
+def _write_final_report(run_root: Path, model_result: dict[str, Any], config: dict[str, Any]) -> None:
+    report = run_root / "reports" / "final_report_v2_7.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# NFF v2.7 Real-Schema Atomic Campaign",
+        "",
+        f"- Status: `{model_result.get('status')}`",
+        f"- OOS prediction rows: `{model_result.get('prediction_rows', 0)}`",
+        f"- Models requested: `{model_result.get('models_requested', [])}`",
+        f"- Models successful: `{model_result.get('models_successful', [])}`",
+        f"- Primary model selected only on validation: `{model_result.get('primary_model_selected_on_validation')}`",
+        "",
+        "## Contract",
+        "",
+        "The rebuilt `nvg_supplement` Parquet schema is audited per date. Factor direction, feature coverage, redundancy filtering, model hyperparameters and model selection are fitted without test data. Exact labels enter at t+1 and exit at t+h+1.",
+        "",
+        "## Model validation scores",
+        "",
+        "```json",
+        json.dumps(model_result.get("validation_model_scores", {}), indent=2, ensure_ascii=False, default=str),
+        "```",
+        "",
+        "## Model failures",
+        "",
+        "```json",
+        json.dumps(model_result.get("model_failures", []), indent=2, ensure_ascii=False, default=str),
+        "```",
+        "",
+        "## Account and capacity",
+        "",
+        "High expected-return predictions are long and low predictions are short. Orders are participation-limited; spread, impact and borrow remain estimated because a complete quote/order-book tape is unavailable.",
+        "",
+        "```json",
+        json.dumps(model_result.get("account", {}), indent=2, ensure_ascii=False, default=str),
+        "```",
+        "",
+        f"Capacity scenarios: `{model_result.get('capacity_rows', 0)}`.",
+        "",
+        "## Recorder",
+        "",
+        "```json",
+        json.dumps(model_result.get("recorder", {}), indent=2, ensure_ascii=False, default=str),
+        "```",
+    ]
+    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # v2.6 expects this compatibility path when it assembles its final report.
+    compatibility = run_root / "reports" / "final_report_v2_5.md"
+    compatibility.write_text(report.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+C._install_worker_command = _install_worker_command
+C.BASE._write_final_report = _write_final_report
+
+
+def main() -> int:
+    return C.main()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
