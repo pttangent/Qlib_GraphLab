@@ -6,6 +6,7 @@ import pandas as pd
 from nff_research import v2_7_launch as LAUNCH
 from nff_research import full_factor_engine as FF
 from nff_research import v2_6_full_defined_campaign as FULL
+from nff_research import v2_7_atomic_campaign as ATOMIC
 
 
 def _cross_section(values: dict[str, list[float]]) -> pd.DataFrame:
@@ -43,6 +44,32 @@ def test_full_label_builder_restores_unnamed_loader_key() -> None:
     frame = pd.DataFrame({"bars_1m__close": [100.0, 101.0]}, index=index)
     normalized = FULL._ensure_research_index(frame)
     assert normalized.index.names == ["instrument", "datetime"]
+
+
+def test_factor_progress_counts_family_window_manifests(tmp_path) -> None:
+    previous_context = ATOMIC.CTX
+    previous_names = getattr(ATOMIC.V26, "FULL_FACTOR_NAMES", None)
+    try:
+        ATOMIC.V26.FULL_FACTOR_NAMES = ["factor_a", "factor_b", "factor_c"]
+        ATOMIC.CTX = ATOMIC.Context("2026-01-02", tmp_path, "contract", 8, 1)
+        manifest_dir = ATOMIC.CTX.root / "factors" / "family=A" / "window=10m"
+        manifest_dir.mkdir(parents=True)
+        (manifest_dir / "manifest.json").write_text(
+            '{"status":"complete","blocks":[{"columns":["factor_a","factor_b"]}]}',
+            encoding="utf-8",
+        )
+        progress = ATOMIC._factor_progress_snapshot("factor_block", "complete", family="A", window="10m")
+        assert progress["factor_completed"] == 2
+        assert progress["factor_expected"] == 3
+        assert progress["factor_progress_pct"] == 66.667
+        assert progress["factor_current_family"] == "A"
+        assert (tmp_path / "factor_progress.json").exists()
+    finally:
+        ATOMIC.CTX = previous_context
+        if previous_names is None:
+            delattr(ATOMIC.V26, "FULL_FACTOR_NAMES")
+        else:
+            ATOMIC.V26.FULL_FACTOR_NAMES = previous_names
 
 
 def test_b04_uses_long_direction_not_long_edge_ratio() -> None:

@@ -94,6 +94,47 @@ def _atomic_parquet(frame: pd.DataFrame, path: Path, index: bool = True) -> None
     os.replace(temp, path)
 
 
+def _factor_progress_snapshot(stage: str | None = None, state: str | None = None, **extra: Any) -> dict[str, Any]:
+    """Summarize family/window factor checkpoints for the outer status file."""
+    if CTX is None:
+        return {}
+    expected_names = set(getattr(V26, "FULL_FACTOR_NAMES", ()))
+    completed_names: set[str] = set()
+    completed_blocks = 0
+    for manifest_path in (CTX.root / "factors").glob("family=*/window=*/manifest.json"):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if manifest.get("status") != "complete":
+            continue
+        completed_blocks += len(manifest.get("blocks", []))
+        for block in manifest.get("blocks", []):
+            completed_names.update(str(name) for name in block.get("columns", []))
+    if expected_names:
+        completed_names &= expected_names
+    completed = len(completed_names)
+    expected = len(expected_names)
+    payload: dict[str, Any] = {
+        "factor_completed": completed,
+        "factor_expected": expected,
+        "factor_progress_pct": round(100.0 * completed / expected, 3) if expected else 0.0,
+        "factor_completed_blocks": completed_blocks,
+        "factor_checkpoint_level": "family/window/factor-block",
+        "factor_progress_path": str(CTX.root / "factors"),
+        "factor_last_event_utc": pd.Timestamp.utcnow().isoformat(),
+    }
+    if stage is not None:
+        payload["factor_current_stage"] = stage
+    if state is not None:
+        payload["factor_current_state"] = state
+    for key in ("family", "window", "factors"):
+        if key in extra:
+            payload[f"factor_current_{key}"] = extra[key]
+    _atomic_json(CTX.out_root / "factor_progress.json", payload)
+    return payload
+
+
 def _event(stage: str, state: str, **extra: Any) -> None:
     if CTX is None:
         return
@@ -114,6 +155,7 @@ def _event(stage: str, state: str, **extra: Any) -> None:
             )
             + "\n"
         )
+    _factor_progress_snapshot(stage, state, **extra)
 
 
 def _timed(stage: str, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -847,6 +889,23 @@ def _install_worker_command() -> None:
     R.worker_command = worker_command
 
 
+def _install_progress_status_bridge() -> None:
+    original_update_status = R.update_status
+
+    def update_status(path: Path, **updates: Any) -> None:
+        progress_path = path.parent / "factor_progress.json"
+        if progress_path.exists():
+            try:
+                progress = json.loads(progress_path.read_text(encoding="utf-8"))
+            except Exception:
+                progress = {}
+            if isinstance(progress, dict):
+                updates = {**progress, **updates}
+        original_update_status(path, **updates)
+
+    R.update_status = update_status
+
+
 def install(config: Mapping[str, Any]) -> None:
     ORIGINAL.update(
         {
@@ -871,6 +930,7 @@ def install(config: Mapping[str, Any]) -> None:
     R.staggered_portfolio_proxy = _stage_cache("portfolio_proxy", R.staggered_portfolio_proxy)
     _install_context(config)
     _install_worker_command()
+    _install_progress_status_bridge()
 
 
 def _write_architecture(run_root: Path, config: Mapping[str, Any]) -> None:
