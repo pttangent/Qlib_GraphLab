@@ -83,6 +83,10 @@ def test_full_label_builder_corrects_swapped_level_names() -> None:
     assert normalized.index.get_level_values("datetime")[0] == pd.Timestamp("2026-01-02 15:00:00", tz="UTC")
 
 
+def test_supplement_contract_has_only_15m_and_30m() -> None:
+    assert ATOMIC.SUPPLEMENT_WINDOWS == ("15m", "30m")
+
+
 def test_b04_uses_long_direction_not_long_edge_ratio() -> None:
     frame = _cross_section(
         {

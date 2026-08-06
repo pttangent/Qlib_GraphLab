@@ -47,6 +47,7 @@ from nff_research.nff_schema_contract import (
 EPS = 1e-8
 VERSION = "2.7-real-schema-atomic"
 SESSION_TZ = "America/New_York"
+SUPPLEMENT_WINDOWS = ("15m", "30m")
 
 
 @dataclass
@@ -226,7 +227,7 @@ def configure_registry(config: Mapping[str, Any]) -> None:
     RUNTIME_WINDOWS = dict(FF.FAMILY_WINDOWS)
     specs = FF.expand_specs(V26.PROTOTYPES)
     supplement_specs = []
-    for window in minute_direction:
+    for window in (15, 30):
         supplement_specs.append(
             {
                 "factor_id": f"full_factor__s01__w{window}m",
@@ -554,9 +555,7 @@ def _supplement_direction(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, 
     groups = frame.index.get_level_values("datetime")
     generated: dict[str, pd.Series] = {}
     runtime: dict[str, dict[str, Any]] = {}
-    for window_text in RUNTIME_WINDOWS.get("B", ()):
-        if not window_text.endswith("m"):
-            continue
+    for window_text in SUPPLEMENT_WINDOWS:
         window = int(window_text[:-1])
         fields = directional_supplement_fields(window)
         price = [
