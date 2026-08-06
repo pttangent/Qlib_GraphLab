@@ -68,7 +68,7 @@ def test_vectorized_deciles_match_qcut_unique_rank_counts() -> None:
     assert actual.to_dict() == expected.to_dict()
 
 
-def test_cached_quantile_edges_match_qcut_for_many_cross_section_sizes() -> None:
+def test_cached_qcut_labels_match_pandas_for_many_cross_section_sizes() -> None:
     for count in range(10, 101):
         ranks = np.arange(1, count + 1, dtype="float64")
         actual = DECILES.qcut_deciles_from_unique_ranks(ranks, np.full(count, count))
@@ -136,7 +136,9 @@ def test_multiscale_a14_to_a16_use_physical_10_15_30() -> None:
     assert result["A14"].notna().all()
     assert result["A15"].notna().all()
     assert result["A16"].notna().all()
-    expected_resonance = pd.Series([1.0, -1.0, 1.0 / 3.0], index=index)
+    expected_resonance = pd.Series(
+        np.asarray([1.0, -1.0, 1.0 / 3.0], dtype="float32"), index=index
+    )
     pd.testing.assert_series_equal(result["A14"], expected_resonance, check_names=False)
 
 
