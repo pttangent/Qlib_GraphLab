@@ -295,3 +295,6 @@ def install(campaign: Any) -> None:
 
     campaign._factor_contract = factor_contract
     campaign._deciles_fast = deciles_checkpointed
+    # R.decile_curves was previously bound to the old function object. Rebind
+    # the actual runner entrypoint so block-level resume is used in production.
+    campaign.R.decile_curves = deciles_checkpointed
