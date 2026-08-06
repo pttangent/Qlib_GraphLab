@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from nff_research import v2_7_deciles as DECILES
 from nff_research import v2_7_run as RUN
 from nff_research import v2_7_runtime_hardening as HARDEN
 
@@ -26,7 +27,31 @@ def _finite_validation_score(source, predictions) -> float:
     return score if math.isfinite(score) else -math.inf
 
 
+def _exact_decile_feature_rows(
+    feature,
+    signal,
+    label,
+    adv,
+    price,
+    trades,
+    metadata,
+    min_n,
+):
+    return DECILES.decile_feature_rows(
+        C.R,
+        feature,
+        signal,
+        label,
+        adv,
+        price,
+        trades,
+        metadata,
+        min_n,
+    )
+
+
 RUN.MODELS._validation_score = _finite_validation_score
+C._decile_feature_rows = _exact_decile_feature_rows
 
 
 def _install_worker_command() -> None:
