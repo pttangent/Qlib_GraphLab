@@ -3,7 +3,7 @@ base_runner_version: "2.6-full-defined"
 
 run:
   name: v2_7_atomic_full_defined_20260806_r1
-  script: nff_research/v2_7_run.py
+  script: nff_research/v2_7_launch.py
   start_date: "2026-01-02"
   end_date: "2026-07-22"
   horizons: [1, 5, 15, 30, 60]
