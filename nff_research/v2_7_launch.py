@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from nff_research import v2_7_checkpoint_hardening as CHECKPOINTS
 from nff_research import v2_7_deciles as DECILES
 from nff_research import v2_7_formula_hardening as FORMULAS
 from nff_research import v2_7_run as RUN
@@ -29,6 +30,7 @@ C._csr = C.FF._csr
 C._conf = C.FF._conf
 C._same = C.FF._same
 FORMULAS.install(C, HARDEN)
+CHECKPOINTS.install(C)
 
 _BASE_VALIDATION_SCORE = RUN.MODELS._validation_score
 _BASE_CONFIGURE_REGISTRY = C.configure_registry
