@@ -1,0 +1,38 @@
+research_version: "2.6-full-defined-smoke"
+base_runner_version: "2.5"
+run:
+  name: v2_6_full_defined_smoke_20260806_r14
+  start_date: "2026-01-02"
+  end_date: "2026-01-02"
+  horizons: [1, 5, 15]
+  initial_parallel: 1
+  max_parallel: 1
+  min_parallel: 1
+  target_cpu_percent: 90
+  memory_high_water_percent: 78
+  memory_min_available_gb: 32
+  disk_free_floor_gb: 50
+  launch_batch_size: 1
+  retries: 1
+  min_cross_section_n: 30
+  allow_mixed_contracts: true
+local_paths:
+  warehouse_root: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_warehouse"
+  research_root: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_research"
+  raw_1m_root: "D:/DEV/AnotherNetworkFactory/RAW_DATA/1m"
+  nodefactorfactory_src: "D:/DEV/AnotherNetworkFactory/NodeFactorFactory/src"
+  industry_metadata: "D:/DEV/AnotherNetworkFactory/warehouses/metadata/symbol_metadata.parquet"
+study:
+  nvg_supplement_root: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_warehouse/nvg_supplement"
+  universe_layers: [all_pit_eligible, common_structural, liquid_common_adv20_top1000]
+neutralization:
+  applies_to: [return_open_to_open, return_vwap_to_vwap]
+portfolio_proxy:
+  rebalance_minutes: 15
+  variants: [contrarian_q05_30m]
+incremental_validation:
+  folds: 3
+  ridge_alpha: 0.001
+  min_train_n: 20
+qlib_recorder:
+  enabled: true
