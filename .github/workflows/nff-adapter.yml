@@ -96,6 +96,7 @@ jobs:
           nff_research/v2_7_formula_semantic_patch.py
           nff_research/v2_7_checkpoint_hardening.py
           nff_research/v2_7_physical_contract.py
+          nff_research/v2_7_supplement_scope.py
           nff_research/v2_7_models.py
           nff_research/v2_7_ablation.py
           nff_research/v2_7_runtime_hardening.py
