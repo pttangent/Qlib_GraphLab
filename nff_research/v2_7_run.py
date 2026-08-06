@@ -15,6 +15,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+# Must be installed before importing v2_7_atomic_entry: that chain imports
+# v2_6_full_defined_campaign, which parses prototypes at module-import time.
+from nff_research import full_factor_engine as _FULL_FACTOR_ENGINE
+from nff_research import v2_7_prototype_contract as _PROTOTYPE_CONTRACT
+
+_PROTOTYPE_CONTRACT.install(_FULL_FACTOR_ENGINE)
+
 from nff_research import v2_7_ablation as ABLATION
 from nff_research import v2_7_atomic_entry as ENTRY
 from nff_research import v2_7_models as MODELS
@@ -137,6 +144,11 @@ def _install_worker_command() -> None:
 def _write_final_report(run_root: Path, model_result: dict[str, Any], config: dict[str, Any]) -> None:
     report = run_root / "reports" / "final_report_v2_7.md"
     report.parent.mkdir(parents=True, exist_ok=True)
+    contract_source = (
+        C.FF.contract_source_manifest()
+        if hasattr(C.FF, "contract_source_manifest")
+        else {"source": "UNKNOWN"}
+    )
     lines = [
         "# NFF v2.7 Real-Schema Atomic Campaign",
         "",
@@ -145,10 +157,16 @@ def _write_final_report(run_root: Path, model_result: dict[str, Any], config: di
         f"- Models requested: `{model_result.get('models_requested', [])}`",
         f"- Models successful: `{model_result.get('models_successful', [])}`",
         f"- Primary model selected only on validation: `{model_result.get('primary_model_selected_on_validation')}`",
+        f"- Prototype contract source: `{contract_source.get('source')}`",
+        f"- Prototype contract SHA: `{contract_source.get('contract_sha256')}`",
         "",
         "## Contract",
         "",
         "The rebuilt `nvg_supplement` Parquet schema is audited per date. Factor direction, feature coverage, redundancy filtering, model hyperparameters and model selection are fitted without test data. Exact labels enter at t+1 and exit at t+h+1.",
+        "",
+        "```json",
+        json.dumps(contract_source, indent=2, ensure_ascii=False, default=str),
+        "```",
         "",
         "## Model validation scores",
         "",
