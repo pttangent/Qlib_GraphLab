@@ -2,10 +2,11 @@ from __future__ import annotations
 
 """Exact, vectorized within-minute decile aggregation.
 
-For unique ranks r=1..N, pandas qcut uses linearly interpolated quantile edges
-`1 + (N-1) * k/10`. The right-closed bin index is therefore
-`max(1, ceil(10*(r-1)/(N-1)))`, not `ceil(10*r/N)` and not
-`floor(10*(r-1)/N)+1`.
+Pandas qcut constructs linearly interpolated quantile edges and uses
+right-closed bins. Floating interpolation is observable for some cross-section
+sizes (for example N=91), so an algebraically simplified ceil formula is not
+byte-for-byte equivalent. We cache the exact edge vector for each N and use
+NumPy searchsorted; the expensive aggregation remains vectorized.
 """
 
 import math
@@ -15,13 +16,39 @@ import numpy as np
 import pandas as pd
 
 
+_QCUT_EDGE_CACHE: dict[int, np.ndarray] = {}
+
+
+def _qcut_edges(count: int) -> np.ndarray:
+    count = int(count)
+    cached = _QCUT_EDGE_CACHE.get(count)
+    if cached is not None:
+        return cached
+    if count <= 1:
+        edges = np.array([1.0, 1.0], dtype="float64")
+    else:
+        values = np.arange(1, count + 1, dtype="float64")
+        edges = np.quantile(values, np.linspace(0.0, 1.0, 11), method="linear")
+    _QCUT_EDGE_CACHE[count] = edges
+    return edges
+
+
 def qcut_deciles_from_unique_ranks(ranks: np.ndarray, counts: np.ndarray) -> np.ndarray:
     ranks = np.asarray(ranks, dtype="float64")
-    counts = np.asarray(counts, dtype="float64")
-    denominator = np.maximum(counts - 1.0, 1.0)
-    bins = np.maximum(1.0, np.ceil(10.0 * (ranks - 1.0) / denominator))
-    bins = np.where(counts <= 1.0, 1.0, bins)
-    return bins.clip(1, 10).astype("int16")
+    counts = np.asarray(counts, dtype="int64")
+    result = np.ones(len(ranks), dtype="int16")
+    for count in np.unique(counts):
+        mask = counts == count
+        if int(count) <= 1:
+            result[mask] = 1
+            continue
+        # searchsorted over the complete edge vector returns 0 for the minimum;
+        # clipping it to one reproduces qcut(include_lowest=True) and its
+        # right-closed interval assignment for all other values.
+        result[mask] = np.searchsorted(
+            _qcut_edges(int(count)), ranks[mask], side="left"
+        ).clip(1, 10).astype("int16")
+    return result
 
 
 def decile_feature_rows(
