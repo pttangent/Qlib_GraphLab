@@ -27,6 +27,26 @@ def test_research_loader_preserves_exact_physical_keys() -> None:
     assert int(merged.loc[0, JOIN.EVENT_TIME_NS_COLUMN]) == timestamp.value
 
 
+def test_research_loader_normalizes_microsecond_event_time_to_nanoseconds() -> None:
+    loader = LAUNCH.C.R.NFFDataLoader.__new__(LAUNCH.C.R.NFFDataLoader)
+    loader.join = "inner"
+    timestamp = pd.Timestamp("2026-01-02 15:00:00", tz="UTC")
+    source_timestamp = pd.Series([timestamp]).astype("datetime64[us, UTC]")
+    frame = pd.DataFrame(
+        {
+            "symbol_id": pd.Series([101], dtype="int64"),
+            "timestamp": source_timestamp,
+            "__symbol__bars_1m": ["AAA"],
+            "__available__bars_1m": source_timestamp,
+            "bars_1m__close": [100.0],
+        }
+    )
+
+    merged = loader._merge_sources([frame])
+
+    assert int(merged.loc[0, JOIN.EVENT_TIME_NS_COLUMN]) == timestamp.value
+
+
 def _write_supplement(root: Path) -> None:
     partition = (
         root

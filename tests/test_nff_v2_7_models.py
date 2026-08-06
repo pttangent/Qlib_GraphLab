@@ -110,7 +110,8 @@ def test_registry_separates_physical_464_from_legacy_476() -> None:
     assert set(physical.loc[physical["family"].eq("B"), "window"]) == {"10m", "15m", "30m"}
     assert set(physical.loc[physical["family"].eq("C"), "window"]) == {"10m", "15m", "30m"}
     assert set(physical.loc[physical["family"].eq("D"), "window"]) == {"10m", "15m", "30m"}
-    assert set(physical.loc[physical["family"].eq("G"), "window"]) == {"15m", "30m", "60m"}
+    assert set(physical.loc[physical["family"].eq("G") & physical["prototype_id"].isin(["G01", "G02", "G03", "G04", "G05", "G06", "G07", "G08", "G09"]), "window"]) == {"15m", "30m", "60m"}
+    assert set(physical.loc[physical["family"].eq("G") & physical["prototype_id"].isin(["G10", "G11", "G12", "G13", "G14"]), "window"]) == {"60s", "180s", "300s"}
     assert set(physical.loc[physical["family"].eq("S"), "window"]) == {"15m", "30m"}
 
     gap = legacy.loc[~legacy["factor_id"].isin(set(physical["factor_id"]))]

@@ -101,3 +101,25 @@ def test_schema_audit_exposes_missing_requested_fields(tmp_path: Path) -> None:
     ]
     assert not required_direction.empty
     assert not required_direction["present"].all()
+
+
+def test_global_schema_probe_is_bounded_per_date(tmp_path: Path) -> None:
+    base = {
+        "trade_date": ["2026-01-02"],
+        "symbol_id": [1],
+        "symbol": ["AAA"],
+        "timestamp": [pd.Timestamp("2026-01-02 14:30:00", tz="UTC")],
+        "available_time": [pd.Timestamp("2026-01-02 14:31:00", tz="UTC")],
+        "price_nvg_15m_terminal_signed_edge_balance": [0.1],
+    }
+    root = tmp_path / "nvg_supplement/minute_nvg_edge_raw/schema=v1"
+    for date, count in (("2026-01-02", 3), ("2026-01-05", 2)):
+        partition = root / f"date={date}"
+        partition.mkdir(parents=True, exist_ok=True)
+        for index in range(count):
+            pd.DataFrame(base).to_parquet(partition / f"part-{index:03d}.parquet", index=False)
+
+    schema = discover_warehouse_schema(tmp_path, None)["nvg_supplement/minute_nvg_edge_raw"]
+    assert len(schema.files) == 5
+    assert schema.schema_probe_count == 4
+    assert schema.schema_scan_policy == "first_last_per_date"

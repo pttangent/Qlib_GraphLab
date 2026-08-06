@@ -63,6 +63,8 @@ class DatasetSchema:
     columns: tuple[str, ...]
     schema_sha256: str | None
     status: str
+    schema_probe_count: int = 0
+    schema_scan_policy: str = "full"
 
 
 def _schema_hash(columns: Sequence[str]) -> str:
@@ -74,6 +76,20 @@ def _partition_files(root: Path, trade_date: str | None) -> list[Path]:
     if trade_date:
         return sorted((root / f"date={trade_date}").glob("*.parquet"))
     return sorted(root.glob("date=*/*.parquet"))
+
+
+def _schema_probe_files(files: Sequence[Path]) -> list[Path]:
+    """Bound footer reads while retaining every partition date in the probe."""
+    by_date: dict[Path, list[Path]] = {}
+    for path in files:
+        by_date.setdefault(path.parent, []).append(path)
+    probes: list[Path] = []
+    for parent in sorted(by_date):
+        members = by_date[parent]
+        probes.append(members[0])
+        if members[-1] != members[0]:
+            probes.append(members[-1])
+    return probes
 
 
 def discover_dataset_schema(
@@ -93,8 +109,12 @@ def discover_dataset_schema(
             columns=(),
             schema_sha256=None,
             status="MISSING_PARTITION",
+            schema_probe_count=0,
+            schema_scan_policy="none",
         )
-    schemas = [tuple(pq.read_schema(path).names) for path in files]
+    probe_files = _schema_probe_files(files)
+    schemas = [tuple(pq.read_schema(path).names) for path in probe_files]
+    scan_policy = "full" if len(probe_files) == len(files) else "first_last_per_date"
     first = schemas[0]
     if any(schema != first for schema in schemas[1:]):
         union = tuple(sorted({column for schema in schemas for column in schema}))
@@ -106,6 +126,8 @@ def discover_dataset_schema(
             columns=union,
             schema_sha256=_schema_hash(union),
             status="MIXED_PARQUET_SCHEMAS",
+            schema_probe_count=len(probe_files),
+            schema_scan_policy=scan_policy,
         )
     return DatasetSchema(
         namespace=namespace,
@@ -115,6 +137,8 @@ def discover_dataset_schema(
         columns=first,
         schema_sha256=_schema_hash(first),
         status="PRESENT",
+        schema_probe_count=len(probe_files),
+        schema_scan_policy=scan_policy,
     )
 
 
@@ -207,6 +231,8 @@ def build_schema_audit(
                     "dataset_status": schema.status,
                     "schema_sha256": schema.schema_sha256,
                     "file_count": len(schema.files),
+                    "schema_probe_count": schema.schema_probe_count,
+                    "schema_scan_policy": schema.schema_scan_policy,
                     "field": field,
                     "is_key": field in KEY_COLUMNS,
                     "present": field in actual,
@@ -231,6 +257,8 @@ def build_schema_audit(
         trade_date=trade_date,
         dataset_status=schemas["nvg_supplement/minute_nvg_edge_raw"].status,
         file_count=len(schemas["nvg_supplement/minute_nvg_edge_raw"].files),
+        schema_probe_count=schemas["nvg_supplement/minute_nvg_edge_raw"].schema_probe_count,
+        schema_scan_policy=schemas["nvg_supplement/minute_nvg_edge_raw"].schema_scan_policy,
         is_key=False,
         requested=True,
         field_status=directional["status"].map(

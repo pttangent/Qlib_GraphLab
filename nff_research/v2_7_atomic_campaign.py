@@ -387,6 +387,10 @@ def _derive_all_checkpointed(
                     if not part.index.equals(frame.index):
                         valid = False
                         break
+                    # Parquet preserves index values but some writers/readers
+                    # drop MultiIndex level names.  Restore the live loader
+                    # index contract before label code consumes the block.
+                    part.index = frame.index
                     loaded.append(part)
                     runtime.update(item.get("factors", {}))
                 if valid:
@@ -415,6 +419,7 @@ def _derive_all_checkpointed(
             selected = names[start : start + CTX.factor_block_size]
             part = pd.concat({name: columns[name] for name in selected}, axis=1, copy=False)
             part.columns = selected
+            part.index = frame.index
             path = root / f"block={block_id:03d}.parquet"
             _atomic_parquet(part, path)
             status = {name: runtime[name] for name in selected}
@@ -433,7 +438,9 @@ def _derive_all_checkpointed(
         )
         _event("factor_block", "complete", family=family, window=window, factors=len(names))
     FF._DERIVE_CACHE.clear()
-    return (pd.concat([frame, *blocks], axis=1, copy=False) if blocks else frame), runtime
+    combined = pd.concat([frame, *blocks], axis=1, copy=False) if blocks else frame
+    combined.index = frame.index
+    return combined, runtime
 
 
 def _csz(series: pd.Series, groups: pd.Index) -> pd.Series:
@@ -906,18 +913,65 @@ def _config_path() -> Path:
 def main() -> int:
     config_path = _config_path()
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if "--worker" in sys.argv:
+        V26._patch()
+        V26._wrap_run_date()
+        configure_registry(config)
+        install(config)
+        return R.main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default=str(config_path))
+    parser.add_argument("--start-date")
+    parser.add_argument("--end-date")
+    parser.add_argument("--run-name")
+    parser.add_argument("--research-root")
+    parser.add_argument("--controls-path")
+    cli = parser.parse_args()
+    if cli.start_date:
+        config["run"]["start_date"] = cli.start_date
+    if cli.end_date:
+        config["run"]["end_date"] = cli.end_date
+    if cli.run_name:
+        config["run"]["name"] = cli.run_name
+    if cli.research_root:
+        config.setdefault("local_paths", {})["research_root"] = cli.research_root
     V26._patch()
     V26._wrap_run_date()
     configure_registry(config)
     install(config)
-    if "--worker" in sys.argv:
-        return R.main()
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default=str(config_path))
-    args = parser.parse_args()
     run_root = Path(config["local_paths"]["research_root"]) / "runs" / config["run"]["name"]
     _write_architecture(run_root, config)
-    return V26.run(Path(args.config).resolve())
+    # V2.6 reloads its YAML inside run(); persist the CLI-resolved contract so
+    # bounded benchmarks and resumed runs cannot silently use the base dates.
+    effective_config_path = run_root / "effective_config.yaml"
+    effective_config_path.write_text(
+        yaml.safe_dump(config, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    # The legacy scheduler does not know --run-name; feed it the resolved
+    # config and its accepted --run-id equivalent for bounded runs.
+    original_argv = list(sys.argv)
+    forwarded_argv: list[str] = []
+    skip_next = False
+    for value in sys.argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if value in {"--run-name", "--research-root"}:
+            skip_next = True
+            continue
+        if value == "--config":
+            forwarded_argv.extend([value, str(effective_config_path)])
+            skip_next = True
+            continue
+        forwarded_argv.append(value)
+    if "--run-id" not in forwarded_argv:
+        forwarded_argv.extend(["--run-id", str(config["run"]["name"])])
+    sys.argv[:] = forwarded_argv
+    try:
+        return V26.run(effective_config_path)
+    finally:
+        sys.argv[:] = original_argv
 
 
 if __name__ == "__main__":

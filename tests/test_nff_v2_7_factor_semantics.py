@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 
 from nff_research import v2_7_launch as LAUNCH
+from nff_research import full_factor_engine as FF
+from nff_research import v2_6_full_defined_campaign as FULL
 
 
 def _cross_section(values: dict[str, list[float]]) -> pd.DataFrame:
@@ -14,6 +16,33 @@ def _cross_section(values: dict[str, list[float]]) -> pd.DataFrame:
         names=["instrument", "datetime"],
     )
     return pd.DataFrame(values, index=index)
+
+
+def test_full_label_builder_normalizes_timestamp_index_alias() -> None:
+    index = pd.MultiIndex.from_arrays(
+        [["AAA", "BBB"], [pd.Timestamp("2026-01-02 15:00:00", tz="UTC")] * 2],
+        names=["symbol", "timestamp"],
+    )
+    frame = pd.DataFrame(
+        {
+            "bars_1m__open": [100.0, 101.0],
+            "bars_1m__close": [100.0, 101.0],
+            "bars_1m__vwap": [100.0, 101.0],
+        },
+        index=index,
+    )
+    normalized = FULL._ensure_research_index(frame)
+    assert normalized.index.names == ["instrument", "datetime"]
+
+
+def test_full_label_builder_restores_unnamed_loader_key() -> None:
+    index = pd.MultiIndex.from_arrays(
+        [["AAA", "BBB"], [pd.Timestamp("2026-01-02 15:00:00", tz="UTC")] * 2],
+        names=[None, None],
+    )
+    frame = pd.DataFrame({"bars_1m__close": [100.0, 101.0]}, index=index)
+    normalized = FULL._ensure_research_index(frame)
+    assert normalized.index.names == ["instrument", "datetime"]
 
 
 def test_b04_uses_long_direction_not_long_edge_ratio() -> None:
@@ -87,3 +116,46 @@ def test_d04_is_causal_within_symbol_zscore() -> None:
     # A future mutation cannot affect earlier causal z-scores.
     pd.testing.assert_series_equal(original.iloc[:-1], revised.iloc[:-1])
     assert original.notna().sum() > 0
+
+
+def test_first_candidate_is_not_dropped_when_fallback_is_missing() -> None:
+    times = pd.date_range("2026-01-02 14:30:00", periods=8, freq="1min", tz="UTC")
+    index = pd.MultiIndex.from_arrays(
+        [["AAA"] * len(times), times], names=["instrument", "datetime"]
+    )
+    momentum = pd.Series(np.linspace(-1.0, 1.0, len(times)), index=index)
+    frame = pd.DataFrame({"minute_nvg__momentum_10m": momentum}, index=index)
+
+    result = FF.derive_prototype(frame, "A__ALL__", "10m")
+
+    expected = momentum.astype("float32")
+    expected.name = "minute_nvg__momentum_10m"
+    pd.testing.assert_series_equal(result["A01"], expected)
+    pd.testing.assert_series_equal(result["A02"], (-expected).rename(expected.name))
+
+
+def test_trade_sketch_fields_resolve_from_canonical_namespace() -> None:
+    times = pd.date_range("2026-01-02 14:30:00", periods=8, freq="1min", tz="UTC")
+    index = pd.MultiIndex.from_arrays(
+        [["AAA"] * len(times), times], names=["instrument", "datetime"]
+    )
+    frame = pd.DataFrame(
+        {
+            "trades_1m_sketch__trade_size_p95": np.full(len(times), 200.0),
+            "trades_1m_core__median_trade_size": np.full(len(times), 100.0),
+            "trades_1m_sketch__trade_size_hhi": np.full(len(times), 0.2),
+            "trades_1m_sketch__top_1pct_volume_share": np.full(len(times), 0.3),
+            "trades_1m_sketch__burstiness": np.full(len(times), 0.4),
+            "trades_1m_sketch__large_trade_dollar_share": np.full(len(times), 0.5),
+            "trades_1m_sketch__large_trade_buy_volume_proxy": np.full(len(times), 75.0),
+            "trades_1m_sketch__large_trade_sell_volume_proxy": np.full(len(times), 25.0),
+        },
+        index=index,
+    )
+
+    result = FF.derive_prototype(frame, "I__ALL__", "1m")
+
+    assert result["I10"].notna().all()
+    assert result["I11"].notna().all()
+    assert result["I12"].notna().all()
+    assert result["I14"].notna().all()

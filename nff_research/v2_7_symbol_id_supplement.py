@@ -70,7 +70,11 @@ def install(campaign: Any) -> None:
                 raise RuntimeError("NFF adapter did not retain symbol_id/event_time before Qlib clock mapping")
             merged[SYMBOL_ID_COLUMN] = _normalise_symbol_id(merged["symbol_id"])
             event = pd.to_datetime(merged["event_time"], utc=True, errors="coerce")
-            merged[EVENT_TIME_NS_COLUMN] = event.astype("int64")
+            # Parquet timestamps may retain their physical microsecond unit.
+            # Normalize explicitly before storing the metadata field whose
+            # contract is nanoseconds; plain astype("int64") preserves the
+            # source unit and shifts dates into 1970 when read as ns.
+            merged[EVENT_TIME_NS_COLUMN] = event.astype("datetime64[ns, UTC]").astype("int64")
             return merged
 
     def merge_symbol_id(frame: pd.DataFrame, warehouse_root: Path) -> pd.DataFrame:

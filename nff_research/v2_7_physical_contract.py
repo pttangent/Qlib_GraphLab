@@ -103,6 +103,18 @@ def _expanded(campaign: Any, windows: Mapping[str, tuple[str, ...]]) -> pd.DataF
         specs = campaign.FF.expand_specs(campaign.V26.PROTOTYPES).copy()
     finally:
         campaign.FF.FAMILY_WINDOWS = previous
+    # G01-G09 are minute-HVG (Wh); G10-G14 are Trade-HVG (We).  They share a
+    # family in the written A-K contract but must retain their independent
+    # physical clocks.  The ordinal mapping is the published 15m/30m/60m
+    # minute horizon to 60s/180s/300s trade horizon.
+    trade_windows = {"15m": "60s", "30m": "180s", "60m": "300s"}
+    trade_mask = specs["family"].eq("G") & specs["prototype_id"].isin(
+        [f"G{value:02d}" for value in range(10, 15)]
+    )
+    specs.loc[trade_mask, "window"] = specs.loc[trade_mask, "window"].map(trade_windows)
+    specs.loc[trade_mask, "factor_id"] = specs.loc[trade_mask].apply(
+        lambda row: campaign.FF.factor_name(row["prototype_id"], row["window"]), axis=1
+    )
     return specs
 
 
