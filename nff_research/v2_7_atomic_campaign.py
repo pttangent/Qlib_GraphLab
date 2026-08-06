@@ -97,6 +97,26 @@ def _rank_frame_average(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(values, index=frame.index, columns=frame.columns)
 
 
+def _rank_frame_by_datetime_average(frame: pd.DataFrame) -> pd.DataFrame:
+    """Rank feature values within each decision-minute cross-section."""
+    if frame.empty:
+        return frame.copy()
+    values = frame.to_numpy(dtype="float64", copy=False)
+    ranked = np.full(values.shape, np.nan, dtype="float64")
+    for positions in frame.groupby(level="datetime", sort=False).indices.values():
+        positions = np.asarray(positions, dtype="int64")
+        block = values[positions]
+        if rankdata is not None:
+            ranked[positions] = rankdata(
+                block, axis=0, method="average", nan_policy="omit"
+            )
+        else:
+            ranked[positions] = pd.DataFrame(block).rank(method="average").to_numpy(
+                dtype="float64"
+            )
+    return pd.DataFrame(ranked, index=frame.index, columns=frame.columns)
+
+
 def _atomic_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # Windows can briefly retain a fixed sibling while a monitor reads it.
@@ -1035,7 +1055,7 @@ def _minute_rank_ic_summary_rank_cache(
             index_key = _index_hash(feature_frame.index)
             ranked_raw = raw_rank_cache.get(index_key)
             if ranked_raw is None:
-                ranked_raw = _rank_frame_average(feature_frame[feature_columns])
+                ranked_raw = _rank_frame_by_datetime_average(feature_frame[feature_columns])
                 raw_rank_cache[index_key] = ranked_raw
             minute_stats, pooled_stats = _ranked_ic_stats_from_ranked_features(
                 ranked_raw, label, feature_columns, min_n
@@ -1056,7 +1076,7 @@ def _minute_rank_ic_summary_rank_cache(
             label_resid = R._residualize_matrix(label.to_frame(label_column), controls_sub, min_n=max(min_n, 40))[label_column]
             ranked_resid = neutral_rank_cache.get(residual_key)
             if ranked_resid is None:
-                ranked_resid = _rank_frame_average(feature_resid[feature_columns])
+                ranked_resid = _rank_frame_by_datetime_average(feature_resid[feature_columns])
                 neutral_rank_cache[residual_key] = ranked_resid
             neut_minute, neut_pooled = _ranked_ic_stats_from_ranked_features(ranked_resid, label_resid, feature_columns, min_n)
             neutral_label_non_null = int(label_resid.notna().sum())

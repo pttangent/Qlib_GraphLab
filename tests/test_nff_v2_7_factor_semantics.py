@@ -48,6 +48,22 @@ def test_vectorized_ranked_ic_matches_reference_statistics() -> None:
         )
 
 
+def test_cached_rank_frame_is_cross_sectional_not_global() -> None:
+    index = pd.MultiIndex.from_tuples(
+        [
+            ("AAA", pd.Timestamp("2026-01-02 15:00:00", tz="UTC")),
+            ("BBB", pd.Timestamp("2026-01-02 15:00:00", tz="UTC")),
+            ("AAA", pd.Timestamp("2026-01-02 15:01:00", tz="UTC")),
+            ("BBB", pd.Timestamp("2026-01-02 15:01:00", tz="UTC")),
+        ],
+        names=["instrument", "datetime"],
+    )
+    frame = pd.DataFrame({"x": [1.0, 3.0, 10.0, 20.0]}, index=index)
+    ranked = ATOMIC._rank_frame_by_datetime_average(frame)
+    expected = frame.groupby(level="datetime", sort=False).rank(method="average")
+    pd.testing.assert_frame_equal(ranked, expected)
+
+
 def test_full_label_builder_normalizes_timestamp_index_alias() -> None:
     index = pd.MultiIndex.from_arrays(
         [["AAA", "BBB"], [pd.Timestamp("2026-01-02 15:00:00", tz="UTC")] * 2],
