@@ -3,14 +3,13 @@ from __future__ import annotations
 """PIT-safe symbol-id join for the out-of-adapter supplement namespace.
 
 The base NFF adapter aligns canonical/features on ``(symbol_id, timestamp)``
-and then converts rows to a Qlib decision clock.  Supplement tables are loaded
+and then converts rows to a Qlib decision clock. Supplement tables are loaded
 by the research layer, so this module carries the original symbol id/event time
 through the adapter as temporary metadata, joins on the physical key, and
 admits a supplement value only when its own availability maps to a decision
 clock no later than the current research row.
 """
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +18,7 @@ import pandas as pd
 import pyarrow.dataset as pads
 
 
-JOIN_VERSION = "v2.7-symbol-id-event-time-pit-v1"
+JOIN_VERSION = "v2.7-symbol-id-event-time-pit-v2"
 SYMBOL_ID_COLUMN = "nff_meta__symbol_id"
 EVENT_TIME_NS_COLUMN = "nff_meta__event_time_ns"
 
@@ -39,6 +38,7 @@ def _atomic_audit(campaign: Any, rows: list[dict[str, Any]]) -> None:
             "trade_date": campaign.CTX.trade_date,
             "rows": rows,
             "fallback_used": any(row.get("join_mode") != "symbol_id_event_time" for row in rows),
+            "temporary_metadata_dropped": True,
         },
     )
 
@@ -57,9 +57,8 @@ def install(campaign: Any) -> None:
         """Opt-in research loader that retains exact physical join metadata."""
 
         def __init__(self, *args: Any, **kwargs: Any):
-            # Preserve int64 symbol ids/event nanoseconds. The daily factor
-            # builder casts actual numeric features to float32 after supplement
-            # joining and drops these temporary metadata columns.
+            # Preserve int64 symbol ids/event nanoseconds. They are removed as
+            # soon as supplement joining is complete and never enter Alpha.
             kwargs["output_float32"] = False
             super().__init__(*args, **kwargs)
 
@@ -229,9 +228,19 @@ def install(campaign: Any) -> None:
                 work = work.drop(columns=["__supplement_available"])
                 occupied.update(values)
         _atomic_audit(campaign, audits)
+        # Exact physical keys are temporary audit/join metadata. Dropping them
+        # here prevents the legacy float32 feature cast from converting ids or
+        # event timestamps into accidental numeric model columns.
         return (
             work.drop(
-                columns=["__symbol_id", "__event_time", "__decision_time"], errors="ignore"
+                columns=[
+                    "__symbol_id",
+                    "__event_time",
+                    "__decision_time",
+                    SYMBOL_ID_COLUMN,
+                    EVENT_TIME_NS_COLUMN,
+                ],
+                errors="ignore",
             )
             .set_index(["datetime", "instrument"])
             .sort_index()
@@ -244,6 +253,7 @@ def install(campaign: Any) -> None:
                 "supplement_join_version": JOIN_VERSION,
                 "join_key": ["symbol_id", "event_time"],
                 "availability_rule": "ceil(supplement_available_time,1min)+1min <= decision_time",
+                "temporary_metadata_dropped_after_join": True,
             }
         )
 
