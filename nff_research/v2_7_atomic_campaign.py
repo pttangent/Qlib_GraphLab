@@ -82,9 +82,27 @@ def _index_hash(index: pd.Index) -> str:
 
 def _atomic_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".part")
-    temp.write_text(json.dumps(value, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
-    os.replace(temp, path)
+    # Windows can briefly retain a fixed sibling while a monitor reads it.
+    # Use a unique temp path so concurrent progress/status writers cannot
+    # replace or delete one another's staging file.
+    temp = path.with_name(
+        f"{path.name}.{os.getpid()}.{time.time_ns()}.part"
+    )
+    try:
+        temp.write_text(
+            json.dumps(value, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        for attempt in range(6):
+            try:
+                os.replace(temp, path)
+                return
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.03 * (attempt + 1))
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def _atomic_parquet(frame: pd.DataFrame, path: Path, index: bool = True) -> None:
