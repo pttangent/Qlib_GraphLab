@@ -17,6 +17,7 @@ from nff_research import v2_7_formula_hardening as FORMULAS
 from nff_research import v2_7_physical_contract as PHYSICAL
 from nff_research import v2_7_run as RUN
 from nff_research import v2_7_runtime_hardening as HARDEN
+from nff_research import v2_7_supplement_scope as SUPPLEMENT_SCOPE
 
 
 C = RUN.C
@@ -28,10 +29,12 @@ C._conf = C.FF._conf
 C._same = C.FF._same
 FORMULAS.install(C, HARDEN)
 CHECKPOINTS.install(C)
-# Install last: this restores the physical 10m/15m/30m minute-NVG contract,
-# records the legacy-only C@60m gap, and includes the correction in checkpoint
-# hashes. Every detached date worker executes this same launcher.
+# Restore the physical 10m/15m/30m minute-NVG contract, record the legacy-only
+# C@60m gap, and include the correction in checkpoint hashes.
 PHYSICAL.install(C)
+# The base directional helper iterates all B windows. Keep only the two S
+# factors explicitly admitted by the v3 contract (15m and 30m).
+SUPPLEMENT_SCOPE.install(C)
 
 _BASE_VALIDATION_SCORE = RUN.MODELS._validation_score
 
