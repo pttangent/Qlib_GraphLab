@@ -263,6 +263,18 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
         normalized.index.get_level_values("datetime"), utc=True, errors="coerce"
     )
     parse_rate = float(parsed_datetime.notna().mean()) if len(parsed_datetime) else 0.0
+    if parse_rate < 0.9 and normalized.index.nlevels == 2:
+        # Some pandas concat paths preserve canonical names but reverse the
+        # actual level values.  Try the only valid alternate orientation
+        # before failing, and keep it only when its datetime content passes.
+        swapped_index = normalized.index.reorder_levels([1, 0]).set_names(canonical_names)
+        swapped_datetime = pd.to_datetime(
+            swapped_index.get_level_values("datetime"), utc=True, errors="coerce"
+        )
+        swapped_rate = float(swapped_datetime.notna().mean()) if len(swapped_datetime) else 0.0
+        if swapped_rate >= 0.9:
+            normalized.index = swapped_index
+            return normalized
     if parse_rate < 0.9:
         samples = [
             list(normalized.index.get_level_values(position)[:5])
