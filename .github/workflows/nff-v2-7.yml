@@ -12,6 +12,7 @@ on:
       - "tests/test_nff_v2_7_models.py"
       - "tests/test_nff_v2_7_factor_semantics.py"
       - "tests/test_nff_v2_7_supplement_scope.py"
+      - "tests/test_nff_v2_7_symbol_id_join.py"
       - ".github/workflows/nff-v2-7.yml"
 
 jobs:
@@ -41,19 +42,22 @@ jobs:
             nff_research/v2_7_checkpoint_hardening.py \
             nff_research/v2_7_physical_contract.py \
             nff_research/v2_7_supplement_scope.py \
+            nff_research/v2_7_symbol_id_supplement.py \
             nff_research/v2_7_models.py \
             nff_research/v2_7_ablation.py \
             nff_research/v2_7_runtime_hardening.py \
             nff_research/v2_7_run.py \
             nff_research/v2_7_launch.py \
-            tests/test_nff_v2_7_supplement_scope.py
+            tests/test_nff_v2_7_supplement_scope.py \
+            tests/test_nff_v2_7_symbol_id_join.py
       - name: Real-schema and semantic tests
         run: |
           pytest -q \
             tests/test_nff_v2_7_schema_contract.py \
             tests/test_nff_v2_7_models.py \
             tests/test_nff_v2_7_factor_semantics.py \
-            tests/test_nff_v2_7_supplement_scope.py
+            tests/test_nff_v2_7_supplement_scope.py \
+            tests/test_nff_v2_7_symbol_id_join.py
       - name: Static semantic guards
         run: |
           python - <<'PY'
@@ -66,6 +70,7 @@ jobs:
           checkpoints = Path("nff_research/v2_7_checkpoint_hardening.py").read_text(encoding="utf-8")
           physical = Path("nff_research/v2_7_physical_contract.py").read_text(encoding="utf-8")
           supplement_scope = Path("nff_research/v2_7_supplement_scope.py").read_text(encoding="utf-8")
+          symbol_join = Path("nff_research/v2_7_symbol_id_supplement.py").read_text(encoding="utf-8")
           models = Path("nff_research/v2_7_models.py").read_text(encoding="utf-8")
           run = Path("nff_research/v2_7_run.py").read_text(encoding="utf-8")
           hardening = Path("nff_research/v2_7_runtime_hardening.py").read_text(encoding="utf-8")
@@ -97,6 +102,9 @@ jobs:
           assert "legacy_contract_gap.json" in physical
           assert "generated - allowed" in supplement_scope
           assert "allowed_s_factors" in supplement_scope
+          assert "symbol_id_event_time" in symbol_join
+          assert "ceil(\"1min\")" in symbol_join
+          assert "supplement_join_audit.json" in symbol_join
           assert 'long_index = block.index[ranked >= 1.0 - quantile]' in models
           assert 'short_index = block.index[ranked <= quantile]' in models
           assert '"elastic_net"' in models and '"lightgbm"' in models and '"gru"' in models
@@ -106,5 +114,6 @@ jobs:
           assert "FORMULAS.install(C, HARDEN)" in launch
           assert "PHYSICAL.install(C)" in launch
           assert "SUPPLEMENT_SCOPE.install(C)" in launch
+          assert "SYMBOL_JOIN.install(C)" in launch
           assert "C._decile_feature_rows = _exact_decile_feature_rows" in launch
           PY
