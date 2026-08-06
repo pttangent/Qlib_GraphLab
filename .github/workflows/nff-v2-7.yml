@@ -66,7 +66,8 @@ jobs:
               assert token in source, f"missing semantic guard: {label}"
           assert "C._shift(activity, 1, frame)" in entry
           assert "full_factor__s01__w30m" in entry
-          assert "np.ceil(10.0 * (ranks - 1.0) / denominator)" in deciles
+          assert "np.quantile(values, np.linspace(0.0, 1.0, 11), method=\"linear\")" in deciles
+          assert "np.searchsorted(" in deciles and 'side="left"' in deciles
           assert 'long_index = block.index[ranked >= 1.0 - quantile]' in models
           assert 'short_index = block.index[ranked <= quantile]' in models
           assert '"elastic_net"' in models and '"lightgbm"' in models and '"gru"' in models
