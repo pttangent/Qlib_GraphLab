@@ -163,27 +163,28 @@ def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(index, pd.MultiIndex):
         raise TypeError(f"research frame must have a MultiIndex, got {type(index).__name__}")
     names = list(index.names)
-    if names == [None, None] and index.nlevels == 2:
-        # The NFF loader's stable physical key is (instrument, datetime),
-        # but a wide concat can discard only the level names.  The values and
-        # order remain intact, so restore this explicit adapter contract.
-        normalized = frame.copy(deep=False)
-        normalized.index = index.set_names(["instrument", "datetime"])
-        return normalized
+
+    def datetime_rate(position: int) -> float:
+        values = index.get_level_values(position)
+        if pd.api.types.is_datetime64_any_dtype(values):
+            return 1.0
+        sample = pd.Series(values[: min(len(values), 2048)], dtype="object")
+        try:
+            parsed = pd.to_datetime(sample, utc=True, errors="coerce", format="mixed")
+        except (TypeError, ValueError):
+            parsed = pd.to_datetime(sample, utc=True, errors="coerce")
+        return float(parsed.notna().mean()) if len(parsed) else 0.0
 
     def datetime_position() -> int:
-        for preferred in ("datetime", "timestamp", "event_time", "decision_time"):
-            if preferred in names:
-                return names.index(preferred)
-        best_position = -1
-        best_rate = 0.0
-        for position in range(index.nlevels):
-            values = index.get_level_values(position)
-            parsed = pd.to_datetime(values, utc=True, errors="coerce")
-            rate = float(parsed.notna().mean()) if len(parsed) else 0.0
-            if rate > best_rate:
-                best_position, best_rate = position, rate
-        if best_position < 0 or best_rate < 0.9:
+        named_candidates = {
+            position
+            for position, name in enumerate(names)
+            if name in {"datetime", "timestamp", "event_time", "decision_time"}
+        }
+        positions = sorted(named_candidates) + [position for position in range(index.nlevels) if position not in named_candidates]
+        best_position = max(positions, key=datetime_rate)
+        best_rate = datetime_rate(best_position)
+        if best_rate < 0.9:
             raise KeyError(f"cannot identify datetime level from index names={names!r}")
         return best_position
 

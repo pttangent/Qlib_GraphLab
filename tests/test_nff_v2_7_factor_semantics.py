@@ -72,6 +72,17 @@ def test_factor_progress_counts_family_window_manifests(tmp_path) -> None:
             ATOMIC.V26.FULL_FACTOR_NAMES = previous_names
 
 
+def test_full_label_builder_corrects_swapped_level_names() -> None:
+    index = pd.MultiIndex.from_arrays(
+        [[pd.Timestamp("2026-01-02 15:00:00", tz="UTC")] * 2, ["AAA", "BBB"]],
+        names=["instrument", "datetime"],
+    )
+    frame = pd.DataFrame({"bars_1m__close": [100.0, 101.0]}, index=index)
+    normalized = FULL._ensure_research_index(frame)
+    assert normalized.index.names == ["datetime", "instrument"]
+    assert normalized.index.get_level_values("datetime")[0] == pd.Timestamp("2026-01-02 15:00:00", tz="UTC")
+
+
 def test_b04_uses_long_direction_not_long_edge_ratio() -> None:
     frame = _cross_section(
         {
