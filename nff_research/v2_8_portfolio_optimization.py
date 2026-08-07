@@ -17,7 +17,9 @@ def expand_cost_scenarios(
     Row order intentionally matches the prior implementation: all base rows for
     cost[0], then all base rows for cost[1], and so on.  Only accounting fields
     differ across scenarios; rankings, Hawkes gates, weights and turnover are
-    computed once upstream.
+    computed once upstream.  The persisted audit label remains the historical
+    ``single_weight_path_expansion`` contract even though the expansion itself
+    is now vectorized with NumPy.
     """
     if base.empty or not costs_bps_one_way:
         return base
@@ -37,7 +39,7 @@ def expand_cost_scenarios(
     result["cost_bps_per_turnover"] = scenario_cost
     result["cost"] = cost
     result["net_return"] = gross - cost
-    result["cost_scenario_source"] = "single_weight_path_vectorized_expansion"
+    result["cost_scenario_source"] = "single_weight_path_expansion"
     return result
 
 
