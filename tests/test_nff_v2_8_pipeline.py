@@ -63,14 +63,21 @@ def test_stage_specs_are_decoupled() -> None:
 def test_runtime_hardening_is_installed_by_canonical_launcher() -> None:
     assert LAUNCH.main is P.main
     assert P._run_date_stage.__module__.endswith("v2_8_runtime_hardening")
-    assert P.detailed_date.__module__.endswith("v2_8_runtime_hardening")
-    assert P.portfolio_date.__module__.endswith("v2_8_runtime_hardening")
+    assert P.materialize_date.__module__.endswith("v2_8_source_contract")
+    assert P.basic_screen_date.__module__.endswith("v2_8_source_contract")
+    assert P.select_candidates.__module__.endswith("v2_8_source_contract")
+    assert P.detailed_date.__module__.endswith("v2_8_source_contract")
+    assert P.portfolio_date.__module__.endswith("v2_8_source_contract")
 
 
 def test_pipeline_source_contains_training_freeze_guards() -> None:
-    source = __import__("pathlib").Path(P.__file__).read_text(encoding="utf-8")
-    hardening = __import__("pathlib").Path(
+    pathlib = __import__("pathlib").Path
+    source = pathlib(P.__file__).read_text(encoding="utf-8")
+    hardening = pathlib(
         __import__("nff_research.v2_8_runtime_hardening", fromlist=["x"]).__file__
+    ).read_text(encoding="utf-8")
+    source_contract = pathlib(
+        __import__("nff_research.v2_8_source_contract", fromlist=["x"]).__file__
     ).read_text(encoding="utf-8")
     assert "portfolio_eligible_after" in source
     assert "skipped_training_period" in source
@@ -80,3 +87,6 @@ def test_pipeline_source_contains_training_freeze_guards() -> None:
     assert "admission_paused" in hardening
     assert "memory_headroom" in hardening
     assert "with_atomic_context" in hardening
+    assert "upstream_fingerprint" in source_contract
+    assert "candidate_manifest_sha256" in source_contract
+    assert "screen_fingerprint" in source_contract
