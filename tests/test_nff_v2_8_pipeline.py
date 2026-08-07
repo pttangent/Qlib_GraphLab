@@ -11,6 +11,7 @@ from nff_research import v2_8_portfolio_optimization as PORTFOLIO_OPT
 from nff_research import v2_8_screen_optimization as SCREEN_OPT
 from nff_research import v2_8_selection_tracks as TRACKS
 from nff_research import v2_8_stage_contracts as STAGE_CONTRACTS
+from nff_research import v2_1_neutralized_runner as RUN
 
 
 def test_factor_family_and_candidate_quotas() -> None:
@@ -167,6 +168,46 @@ def test_runtime_hardening_is_installed_by_canonical_launcher() -> None:
     assert P._selected_portfolio_proxy.__module__.endswith(
         "v2_8_portfolio_optimization"
     )
+
+
+def test_turnover_controlled_portfolio_accepts_feature_block_index_order() -> None:
+    symbols = [f"S{index:02d}" for index in range(40)]
+    timestamp = pd.Timestamp("2026-01-02 15:00:00")
+    index = pd.MultiIndex.from_product(
+        [symbols, [timestamp]], names=["instrument", "datetime"]
+    )
+    work = pd.DataFrame(
+        {
+            "feature": range(len(index)),
+            "label": [0.001] * len(index),
+            "__adv20": [1_000_000.0] * len(index),
+        },
+        index=index,
+    )
+    variant = {
+        "name": "turnover_controlled_test",
+        "direction": 1.0,
+        "quantile": 0.05,
+        "rebalance_minutes": 15,
+        "gate_pair_id": None,
+        "gate_mode": "none",
+        "turnover_controlled": True,
+    }
+
+    rows = RUN._portfolio_variant_rows_batched(
+        work,
+        ["feature"],
+        variant,
+        "2026-01-02",
+        "final_trading_universe",
+        "return_vwap_to_vwap",
+        15,
+        30,
+        1.0,
+    )
+
+    assert rows
+    assert rows[0]["selected_count"] > 0
 
 
 def test_pipeline_source_contains_training_freeze_guards() -> None:
