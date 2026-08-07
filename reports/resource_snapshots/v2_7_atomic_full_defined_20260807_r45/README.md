@@ -1,25 +1,25 @@
 # v2.7 Resource Snapshot: v2_7_atomic_full_defined_20260807_r45
 
-Snapshot UTC: `2026-08-07T02:19:37.361661+00:00`
+Snapshot UTC: `2026-08-07T02:29:40.790019+00:00`
 Status: `running`; stage: `neutralized_factor_diagnostics`
-Progress: `0/138` dates; running `2`; pending `136`; failures `0`.
+Progress: `0/138` dates; running `1`; pending `137`; failures `0`.
 Contract: `1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31`; git: `9caaa5a60b88fa03bc722be39d39f1f03e2bfc80`
 
 ## Resource Summary
 
 | Metric | Min | Median | P90 | Max | Latest |
 |---|---:|---:|---:|---:|---:|
-| CPU % | 9.300 | 27.600 | 48.620 | 73.700 | 30.500 |
-| Memory % | 17.200 | 46.900 | 69.060 | 93.100 | 58.300 |
-| Available memory GB | 8.800 | 67.620 | 87.882 | 105.410 | 53.060 |
-| Worker RSS total GB | 0.010 | 35.677 | 65.360 | 96.282 | 51.617 |
-| Worker RSS max GB | 0.010 | 23.632 | 36.524 | 43.822 | 37.190 |
-| Disk free GB | 365.010 | 367.300 | 373.820 | 375.230 | 365.010 |
+| CPU % | 9.300 | 28.700 | 48.500 | 73.700 | 19.300 |
+| Memory % | 17.200 | 48.100 | 68.800 | 93.100 | 41.400 |
+| Available memory GB | 8.800 | 66.105 | 86.871 | 105.410 | 74.650 |
+| Worker RSS total GB | 0.010 | 38.094 | 64.222 | 96.282 | 29.442 |
+| Worker RSS max GB | 0.010 | 25.959 | 37.472 | 43.822 | 29.433 |
+| Disk free GB | 361.800 | 367.300 | 373.760 | 375.230 | 361.800 |
 
 ## Scheduling
 
-Resource samples: `729`; scheduler tuning events: `64`.
-Latest tuning: `{"sample_utc": "2026-08-07T02:18:38.863227+00:00", "previous_parallel": 2, "target_parallel": 2, "reason": "within_target_or_limit", "safe_streak": 14, "running_workers": 2, "stage_parallel_cap": 2, "active_worker_stages": {"dates": {"2026-02-04": "ic_and_neutralization", "2026-03-03": "ic_and_neutralization"}, "counts": {"ic_and_neutralization": 2}, "cap_by_stage": {"ic_and_neutralization": 3}, "effective_cap": 2}, "resources": {"cpu_percent": 34.8, "memory_percent": 57.7, "memory_available_gb": 53.92, "disk_free_gb": 365.01, "worker_process_count": 3, "worker_rss_total_gb": 48.216, "worker_rss_max_gb": 36.533}}`
+Resource samples: `844`; scheduler tuning events: `75`.
+Latest tuning: `{"sample_utc": "2026-08-07T02:29:07.357945+00:00", "previous_parallel": 1, "target_parallel": 1, "reason": "awaiting_safe_streak", "safe_streak": 1, "running_workers": 1, "stage_parallel_cap": 2, "active_worker_stages": {"dates": {"2026-03-03": "ic_and_neutralization"}, "counts": {"ic_and_neutralization": 1}, "cap_by_stage": {"ic_and_neutralization": 3}, "effective_cap": 2}, "resources": {"cpu_percent": 15.3, "memory_percent": 42.4, "memory_available_gb": 73.3, "disk_free_gb": 362.11, "worker_process_count": 2, "worker_rss_total_gb": 31.772, "worker_rss_max_gb": 31.763}}`
 
 ## Factor Progress
 
