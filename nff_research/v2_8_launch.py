@@ -17,6 +17,7 @@ from nff_research import v2_8_selection_tracks as SELECTION_TRACKS
 from nff_research import v2_8_strict_training_window as STRICT_TRAINING
 from nff_research import v2_8_portfolio_optimization as PORTFOLIO_OPT
 from nff_research import v2_8_materialize_memory as MATERIALIZE_MEMORY
+from nff_research import v2_8_materialize_gate_audit as MATERIALIZE_GATE_AUDIT
 from nff_research import v2_8_source_contract as SOURCE_CONTRACT
 from nff_research import v2_8_stage_contracts as STAGE_CONTRACTS
 from nff_research import v2_8_bootstrap_scheduler as BOOTSTRAP_SCHEDULER
@@ -33,6 +34,10 @@ PORTFOLIO_OPT.install(PIPELINE)
 # Install before source/stage wrappers so source fingerprints and semantic
 # stage contexts remain outermost around the optimized materialize function.
 MATERIALIZE_MEMORY.install(PIPELINE)
+# The gatefix correctly makes factor-block inventory authoritative for streamed
+# column presence. Re-apply the v2.7 unavailable/zero-coverage semantics using
+# live runtime status with manifest-backed resume fallback.
+MATERIALIZE_GATE_AUDIT.install(MATERIALIZE_MEMORY, PIPELINE)
 SOURCE_CONTRACT.install(PIPELINE)
 STAGE_CONTRACTS.install(PIPELINE)
 BOOTSTRAP_SCHEDULER.install(PIPELINE)
