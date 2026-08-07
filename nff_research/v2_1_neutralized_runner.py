@@ -3372,6 +3372,48 @@ def stage_parallel_cap(
     return min(max_parallel, cap), summary
 
 
+def drain_excess_workers(
+    running: dict[str, dict[str, Any]],
+    target_parallel: int,
+    reason: str,
+) -> list[dict[str, Any]]:
+    """Terminate only excess workers after a hard cap reduction.
+
+    Workers are independently checkpointed and retried by the parent. Draining
+    the largest RSS processes first protects the host from a transient OOM
+    while preserving the run contract and already-written factor blocks.
+    """
+    excess = max(0, len(running) - int(target_parallel))
+    if excess == 0:
+        return []
+    candidates: list[tuple[float, str, dict[str, Any]]] = []
+    for trade_date, info in running.items():
+        process = info.get("process")
+        rss_gb = 0.0
+        try:
+            if process is not None and process.poll() is None:
+                rss_gb = psutil.Process(process.pid).memory_info().rss / 1024**3
+        except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
+            pass
+        candidates.append((rss_gb, trade_date, info))
+    actions: list[dict[str, Any]] = []
+    for rss_gb, trade_date, info in sorted(candidates, reverse=True)[:excess]:
+        process = info.get("process")
+        if process is None or process.poll() is not None:
+            continue
+        process.terminate()
+        actions.append(
+            {
+                "trade_date": trade_date,
+                "pid": int(process.pid),
+                "rss_gb": round(rss_gb, 3),
+                "reason": reason,
+                "action": "terminate_and_requeue",
+            }
+        )
+    return actions
+
+
 def worker_command(args: argparse.Namespace, out_root: Path, controls_path: Path, trade_date: str) -> list[str]:
     command = [
         sys.executable,
@@ -3629,6 +3671,24 @@ def main() -> int:
                         "resources": resources,
                     },
                 )
+                drain_actions = drain_excess_workers(
+                    running,
+                    current_parallel,
+                    tune_reason,
+                )
+                if drain_actions:
+                    append_jsonl(
+                        tuning_log_path,
+                        {
+                            "sample_utc": utc_now(),
+                            "previous_parallel": previous_parallel,
+                            "target_parallel": current_parallel,
+                            "reason": "active_worker_drain",
+                            "drain_actions": drain_actions,
+                            "active_worker_stages": stage_summary,
+                            "resources": resources,
+                        },
+                    )
 
         launched_this_cycle = 0
         while pending and len(running) < current_parallel and launched_this_cycle < max(1, args.launch_batch_size):
