@@ -1,5 +1,5 @@
 {
-  "snapshot_utc": "2026-08-07T02:50:07.196147+00:00",
+  "snapshot_utc": "2026-08-07T02:51:52.479581+00:00",
   "run_id": "v2_7_atomic_full_defined_20260807_r45",
   "run_root": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45",
   "status": {
@@ -12,16 +12,16 @@
     "status": "running",
     "total_units": 138,
     "completed_units": 0,
-    "parallel": 2,
-    "running_workers": 2,
+    "parallel": 1,
+    "running_workers": 1,
     "resources": {
-      "cpu_percent": 27.6,
-      "memory_percent": 65.5,
-      "memory_available_gb": 43.92,
-      "disk_free_gb": 357.22,
-      "worker_process_count": 3,
-      "worker_rss_total_gb": 60.737,
-      "worker_rss_max_gb": 33.128
+      "cpu_percent": 15.2,
+      "memory_percent": 40.8,
+      "memory_available_gb": 75.45,
+      "disk_free_gb": 356.9,
+      "worker_process_count": 2,
+      "worker_rss_total_gb": 28.734,
+      "worker_rss_max_gb": 28.725
     },
     "horizons": [
       1,
@@ -41,16 +41,13 @@
     ],
     "run_contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
     "effective_config": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\effective_config.json",
-    "heartbeat_utc": "2026-08-07T02:50:04.384190+00:00",
+    "heartbeat_utc": "2026-08-07T02:51:49.028343+00:00",
     "running_units": [
       {
         "trade_date": "2026-03-03"
-      },
-      {
-        "trade_date": "2026-03-09"
       }
     ],
-    "pending_units": 136,
+    "pending_units": 137,
     "failure_count": 0,
     "factor_completed": 464,
     "factor_expected": 464,
@@ -65,75 +62,81 @@
     "factor_current_window": "30m",
     "factor_current_factors": 1,
     "last_failure": {
-      "trade_date": "2026-02-04",
+      "trade_date": "2026-03-09",
       "attempt": 1,
       "returncode": 1,
       "error": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n",
-      "stdout": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-02-04_attempt=1.out.log",
-      "stderr": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-02-04_attempt=1.err.log",
+      "stdout": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-03-09_attempt=1.out.log",
+      "stderr": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-03-09_attempt=1.err.log",
       "healing_action": "requeued"
     }
   },
-  "resource_sample_count": 1078,
+  "resource_sample_count": 1098,
   "resource_summary": {
     "cpu_percent": {
-      "count": 1078,
+      "count": 1098,
       "min": 9.3,
-      "median": 28.2,
-      "p90": 47.53000000000001,
+      "median": 28.05,
+      "p90": 47.29000000000002,
       "max": 73.7,
-      "latest": 27.6
+      "latest": 15.2
     },
     "memory_percent": {
-      "count": 1078,
+      "count": 1098,
       "min": 17.2,
-      "median": 50.0,
-      "p90": 65.6,
+      "median": 50.05,
+      "p90": 66.13,
       "max": 93.1,
-      "latest": 65.5
+      "latest": 40.8
     },
     "memory_available_gb": {
-      "count": 1078,
+      "count": 1098,
       "min": 8.8,
-      "median": 63.66,
-      "p90": 83.91400000000002,
+      "median": 63.58,
+      "p90": 83.36600000000004,
       "max": 105.41,
-      "latest": 43.92
+      "latest": 75.45
     },
     "worker_rss_total_gb": {
-      "count": 1078,
+      "count": 1098,
       "min": 0.01,
-      "median": 40.382000000000005,
-      "p90": 60.7216,
+      "median": 40.521,
+      "p90": 61.19370000000001,
       "max": 96.282,
-      "latest": 60.737
+      "latest": 28.734
     },
     "worker_rss_max_gb": {
-      "count": 1078,
+      "count": 1098,
       "min": 0.01,
-      "median": 27.3615,
-      "p90": 36.982299999999995,
+      "median": 27.548000000000002,
+      "p90": 36.9786,
       "max": 43.822,
-      "latest": 33.128
+      "latest": 28.725
     },
     "disk_free_gb": {
-      "count": 1078,
-      "min": 357.22,
-      "median": 366.1,
-      "p90": 373.08,
+      "count": 1098,
+      "min": 356.89,
+      "median": 365.795,
+      "p90": 373.03,
       "max": 375.23,
-      "latest": 357.22
+      "latest": 356.9
     }
   },
-  "scheduler_tuning_count": 95,
+  "scheduler_tuning_count": 97,
   "latest_scheduler_tuning": {
-    "sample_utc": "2026-08-07T02:50:04.378974+00:00",
+    "sample_utc": "2026-08-07T02:51:07.155474+00:00",
     "previous_parallel": 2,
-    "target_parallel": 2,
-    "reason": "within_target_or_limit",
-    "safe_streak": 0,
-    "running_workers": 2,
-    "stage_parallel_cap": 2,
+    "target_parallel": 1,
+    "reason": "active_worker_drain",
+    "drain_actions": [
+      {
+        "trade_date": "2026-03-09",
+        "pid": 73452,
+        "rss_gb": 36.53,
+        "reason": "memory_guard",
+        "action": "terminate_and_requeue"
+      }
+    ],
     "active_worker_stages": {
       "dates": {
         "2026-03-03": "ic_and_neutralization",
@@ -148,13 +151,13 @@
       "effective_cap": 2
     },
     "resources": {
-      "cpu_percent": 27.6,
-      "memory_percent": 65.5,
-      "memory_available_gb": 43.92,
-      "disk_free_gb": 357.22,
+      "cpu_percent": 29.8,
+      "memory_percent": 69.5,
+      "memory_available_gb": 38.8,
+      "disk_free_gb": 356.89,
       "worker_process_count": 3,
-      "worker_rss_total_gb": 60.737,
-      "worker_rss_max_gb": 33.128
+      "worker_rss_total_gb": 65.269,
+      "worker_rss_max_gb": 36.531
     }
   },
   "factor_progress": [

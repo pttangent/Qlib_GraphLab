@@ -8,16 +8,16 @@
   "status": "running",
   "total_units": 138,
   "completed_units": 0,
-  "parallel": 2,
-  "running_workers": 2,
+  "parallel": 1,
+  "running_workers": 1,
   "resources": {
-    "cpu_percent": 27.6,
-    "memory_percent": 65.5,
-    "memory_available_gb": 43.92,
-    "disk_free_gb": 357.22,
-    "worker_process_count": 3,
-    "worker_rss_total_gb": 60.737,
-    "worker_rss_max_gb": 33.128
+    "cpu_percent": 15.2,
+    "memory_percent": 40.8,
+    "memory_available_gb": 75.45,
+    "disk_free_gb": 356.9,
+    "worker_process_count": 2,
+    "worker_rss_total_gb": 28.734,
+    "worker_rss_max_gb": 28.725
   },
   "horizons": [
     1,
@@ -37,16 +37,13 @@
   ],
   "run_contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
   "effective_config": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\effective_config.json",
-  "heartbeat_utc": "2026-08-07T02:50:04.384190+00:00",
+  "heartbeat_utc": "2026-08-07T02:51:49.028343+00:00",
   "running_units": [
     {
       "trade_date": "2026-03-03"
-    },
-    {
-      "trade_date": "2026-03-09"
     }
   ],
-  "pending_units": 136,
+  "pending_units": 137,
   "failure_count": 0,
   "factor_completed": 464,
   "factor_expected": 464,
@@ -61,12 +58,12 @@
   "factor_current_window": "30m",
   "factor_current_factors": 1,
   "last_failure": {
-    "trade_date": "2026-02-04",
+    "trade_date": "2026-03-09",
     "attempt": 1,
     "returncode": 1,
     "error": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n",
-    "stdout": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-02-04_attempt=1.out.log",
-    "stderr": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-02-04_attempt=1.err.log",
+    "stdout": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-03-09_attempt=1.out.log",
+    "stderr": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-03-09_attempt=1.err.log",
     "healing_action": "requeued"
   }
 }
