@@ -1,9 +1,9 @@
 {
-  "pid": 119324,
+  "pid": 113488,
   "run_id": "v2_7_atomic_full_defined_20260807_r45",
   "out_root": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45",
   "controls_path": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_research\\derived_inputs\\daily_bar_controls_v2_1\\daily_controls_2026-01-02_2026-07-22.parquet",
-  "started_utc": "2026-08-07T01:41:03.040353+00:00",
+  "started_utc": "2026-08-07T01:45:06.820129+00:00",
   "stage": "neutralized_factor_diagnostics",
   "status": "running",
   "total_units": 138,
@@ -11,13 +11,13 @@
   "parallel": 1,
   "running_workers": 1,
   "resources": {
-    "cpu_percent": 22.1,
-    "memory_percent": 30.9,
-    "memory_available_gb": 88.03,
-    "disk_free_gb": 367.31,
+    "cpu_percent": 22.0,
+    "memory_percent": 37.4,
+    "memory_available_gb": 79.75,
+    "disk_free_gb": 367.3,
     "worker_process_count": 2,
-    "worker_rss_total_gb": 14.608,
-    "worker_rss_max_gb": 14.598
+    "worker_rss_total_gb": 25.679,
+    "worker_rss_max_gb": 25.669
   },
   "horizons": [
     1,
@@ -37,7 +37,7 @@
   ],
   "run_contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
   "effective_config": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\effective_config.json",
-  "heartbeat_utc": "2026-08-07T01:42:16.935761+00:00",
+  "heartbeat_utc": "2026-08-07T01:46:10.286407+00:00",
   "running_units": [
     {
       "trade_date": "2026-06-09"
@@ -51,7 +51,7 @@
   "factor_completed_blocks": 68,
   "factor_checkpoint_level": "family/window/factor-block",
   "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-06-09\\factors",
-  "factor_last_event_utc": "2026-08-07T01:41:11.930110+00:00",
+  "factor_last_event_utc": "2026-08-07T01:45:15.907414+00:00",
   "factor_current_stage": "date",
   "factor_current_state": "running",
   "factor_current_family": "S",
