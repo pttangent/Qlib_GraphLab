@@ -3447,6 +3447,11 @@ def main() -> int:
     parser.add_argument("--launch-batch-size", type=int, default=4)
     parser.add_argument("--min-cs-n", type=int, default=30)
     parser.add_argument("--contract-hash")
+    parser.add_argument(
+        "--resume-existing-contract",
+        action="store_true",
+        help="Resume an existing run contract while changing runtime-only scheduler flags.",
+    )
     parser.add_argument("--allow-mixed-contracts", action="store_true")
     parser.add_argument("--rebalance-minutes", type=int, default=15)
     parser.add_argument("--cost-bps-per-turnover", type=float, default=1.0)
@@ -3474,7 +3479,32 @@ def main() -> int:
         return 0
 
     effective_config["paths"]["controls_path"] = str(controls_path)
-    if args.worker and args.contract_hash:
+    if args.resume_existing_contract:
+        existing_hash = read_run_contract_hash(out_root)
+        if not existing_hash:
+            raise RuntimeError(f"--resume-existing-contract requires an existing run contract: {out_root}")
+        if args.contract_hash and existing_hash != args.contract_hash:
+            raise RuntimeError(
+                f"resume contract {args.contract_hash} does not match existing run contract {existing_hash}"
+            )
+        contract_hash = existing_hash
+        args.contract_hash = existing_hash
+        atomic_write_json(
+            out_root / "runtime_resume.json",
+            {
+                "resumed_utc": utc_now(),
+                "existing_contract_hash": existing_hash,
+                "current_git_commit": current_git_commit(),
+                "runtime_only_overrides": {
+                    "parallel": args.parallel,
+                    "max_parallel": args.max_parallel,
+                    "min_parallel": args.min_parallel,
+                    "memory_min_available_gb": args.memory_min_available_gb,
+                },
+                "note": "Research contract is unchanged; scheduler-only overrides are recorded separately.",
+            },
+        )
+    elif args.worker and args.contract_hash:
         existing_hash = read_run_contract_hash(out_root)
         if existing_hash and existing_hash != args.contract_hash:
             raise RuntimeError(f"worker contract hash {args.contract_hash} does not match existing run contract {existing_hash}")
