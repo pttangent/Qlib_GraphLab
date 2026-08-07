@@ -1,5 +1,5 @@
 {
-  "snapshot_utc": "2026-08-07T01:46:10.860677+00:00",
+  "snapshot_utc": "2026-08-07T02:00:27.593167+00:00",
   "run_id": "v2_7_atomic_full_defined_20260807_r45",
   "run_root": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45",
   "status": {
@@ -15,13 +15,13 @@
     "parallel": 1,
     "running_workers": 1,
     "resources": {
-      "cpu_percent": 22.0,
-      "memory_percent": 37.4,
-      "memory_available_gb": 79.75,
+      "cpu_percent": 19.6,
+      "memory_percent": 43.5,
+      "memory_available_gb": 71.9,
       "disk_free_gb": 367.3,
       "worker_process_count": 2,
-      "worker_rss_total_gb": 25.679,
-      "worker_rss_max_gb": 25.669
+      "worker_rss_total_gb": 32.948,
+      "worker_rss_max_gb": 32.939
     },
     "horizons": [
       1,
@@ -41,7 +41,7 @@
     ],
     "run_contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
     "effective_config": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\effective_config.json",
-    "heartbeat_utc": "2026-08-07T01:46:10.286407+00:00",
+    "heartbeat_utc": "2026-08-07T02:00:23.667186+00:00",
     "running_units": [
       {
         "trade_date": "2026-06-09"
@@ -54,103 +54,110 @@
     "factor_progress_pct": 100.0,
     "factor_completed_blocks": 68,
     "factor_checkpoint_level": "family/window/factor-block",
-    "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-06-09\\factors",
-    "factor_last_event_utc": "2026-08-07T01:45:15.907414+00:00",
-    "factor_current_stage": "date",
+    "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-06-01\\factors",
+    "factor_last_event_utc": "2026-08-07T01:53:13.356471+00:00",
+    "factor_current_stage": "ic_and_neutralization",
     "factor_current_state": "running",
     "factor_current_family": "S",
     "factor_current_window": "30m",
     "factor_current_factors": 1,
     "last_failure": {
-      "trade_date": "2026-03-03",
+      "trade_date": "2026-06-01",
       "attempt": 1,
-      "returncode": 4294967295,
-      "error": "worker failed without stderr",
-      "stdout": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-03-03_attempt=1.out.log",
-      "stderr": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-03-03_attempt=1.err.log",
+      "returncode": 1,
+      "error": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n",
+      "stdout": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-01_attempt=1.out.log",
+      "stderr": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-01_attempt=1.err.log",
       "healing_action": "requeued"
     }
   },
-  "resource_sample_count": 346,
+  "resource_sample_count": 509,
   "resource_summary": {
     "cpu_percent": {
-      "count": 346,
+      "count": 509,
       "min": 9.3,
-      "median": 30.1,
-      "p90": 53.05,
-      "max": 71.7,
-      "latest": 22.0
+      "median": 29.5,
+      "p90": 50.22,
+      "max": 73.7,
+      "latest": 19.6
     },
     "memory_percent": {
-      "count": 346,
+      "count": 509,
       "min": 17.2,
-      "median": 49.349999999999994,
-      "p90": 75.6,
+      "median": 47.6,
+      "p90": 71.38,
       "max": 93.1,
-      "latest": 37.4
+      "latest": 43.5
     },
     "memory_available_gb": {
-      "count": 346,
+      "count": 509,
       "min": 8.8,
-      "median": 64.55,
-      "p90": 89.225,
+      "median": 66.72,
+      "p90": 87.696,
       "max": 105.41,
-      "latest": 79.75
+      "latest": 71.9
     },
     "worker_rss_total_gb": {
-      "count": 346,
+      "count": 509,
       "min": 0.01,
-      "median": 37.952,
-      "p90": 73.6175,
+      "median": 36.0,
+      "p90": 68.3138,
       "max": 96.282,
-      "latest": 25.679
+      "latest": 32.948
     },
     "worker_rss_max_gb": {
-      "count": 346,
+      "count": 509,
       "min": 0.01,
-      "median": 23.188499999999998,
-      "p90": 35.393,
+      "median": 22.081,
+      "p90": 35.303000000000004,
       "max": 39.394,
-      "latest": 25.669
+      "latest": 32.939
     },
     "disk_free_gb": {
-      "count": 346,
+      "count": 509,
       "min": 367.01,
-      "median": 369.57,
-      "p90": 375.22,
+      "median": 367.33,
+      "p90": 375.01,
       "max": 375.23,
       "latest": 367.3
     }
   },
-  "scheduler_tuning_count": 31,
+  "scheduler_tuning_count": 45,
   "latest_scheduler_tuning": {
-    "sample_utc": "2026-08-07T01:46:10.279185+00:00",
-    "previous_parallel": 1,
+    "sample_utc": "2026-08-07T01:59:47.011534+00:00",
+    "previous_parallel": 2,
     "target_parallel": 1,
-    "reason": "awaiting_safe_streak",
-    "safe_streak": 1,
-    "running_workers": 1,
-    "stage_parallel_cap": 2,
+    "reason": "active_worker_drain",
+    "drain_actions": [
+      {
+        "trade_date": "2026-06-01",
+        "pid": 16004,
+        "rss_gb": 35.633,
+        "reason": "memory_guard",
+        "action": "terminate_and_requeue"
+      }
+    ],
     "active_worker_stages": {
       "dates": {
-        "2026-06-09": "date"
+        "2026-06-09": "ic_and_neutralization",
+        "2026-06-01": "ic_and_neutralization"
       },
       "counts": {
-        "date": 1
+        "ic_and_neutralization": 2
       },
       "cap_by_stage": {
-        "date": 3
+        "ic_and_neutralization": 3
       },
       "effective_cap": 2
     },
     "resources": {
-      "cpu_percent": 22.0,
-      "memory_percent": 37.4,
-      "memory_available_gb": 79.75,
+      "cpu_percent": 30.3,
+      "memory_percent": 71.8,
+      "memory_available_gb": 35.94,
       "disk_free_gb": 367.3,
-      "worker_process_count": 2,
-      "worker_rss_total_gb": 25.679,
-      "worker_rss_max_gb": 25.669
+      "worker_process_count": 3,
+      "worker_rss_total_gb": 68.794,
+      "worker_rss_max_gb": 35.643
     }
   },
   "factor_progress": [
@@ -196,7 +203,7 @@
       "factor_expected": 464,
       "factor_progress_pct": 100.0,
       "factor_manifest_count": 32,
-      "last_stage": "date",
+      "last_stage": "ic_and_neutralization",
       "last_state": "running"
     },
     {
@@ -205,7 +212,7 @@
       "factor_expected": 464,
       "factor_progress_pct": 100.0,
       "factor_manifest_count": 32,
-      "last_stage": "date",
+      "last_stage": "ic_and_neutralization",
       "last_state": "running"
     }
   ],
@@ -337,23 +344,23 @@
       },
       {
         "path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-01_attempt=1.err.log",
-        "bytes": 0,
+        "bytes": 369,
         "has_traceback": false,
         "has_error": false,
-        "tail": ""
+        "tail": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n"
       },
       {
         "path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-09_attempt=1.err.log",
-        "bytes": 0,
+        "bytes": 369,
         "has_traceback": false,
         "has_error": false,
-        "tail": ""
+        "tail": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n"
       }
     ],
-    "nonempty_log_count": 1,
+    "nonempty_log_count": 3,
     "traceback_or_exception_count": 0,
     "traceback_or_exception_logs": [],
-    "warning_only_count": 1
+    "warning_only_count": 3
   },
   "contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
   "git_commit": "9caaa5a60b88fa03bc722be39d39f1f03e2bfc80",
