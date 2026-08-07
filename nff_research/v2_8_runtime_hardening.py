@@ -77,7 +77,12 @@ def install(P: Any) -> None:
         stage: str,
     ) -> dict[str, Any]:
         spec = P._stage_specs(config)[stage]
-        dates = P._dates(config)
+        runtime_dates = config.get("pipeline", {}).get("_runtime_dates")
+        dates = (
+            [str(value) for value in runtime_dates]
+            if isinstance(runtime_dates, list)
+            else P._dates(config)
+        )
         if stage == "portfolio" and not bool(
             config.get("selection", {}).get("allow_in_sample_portfolio", False)
         ):
@@ -103,7 +108,11 @@ def install(P: Any) -> None:
                 min(spec.estimated_worker_gb, 8.0),
             )
         )
-        status_path = P._pipeline_root(config) / f"status_{stage}.json"
+        status_suffix = config.get("pipeline", {}).get("_runtime_status_suffix")
+        status_name = f"status_{stage}"
+        if status_suffix:
+            status_name += f"_{status_suffix}"
+        status_path = P._pipeline_root(config) / f"{status_name}.json"
         log_root = P._pipeline_root(config) / "worker_logs" / stage
         log_root.mkdir(parents=True, exist_ok=True)
         attempts: dict[str, int] = {}
@@ -115,8 +124,6 @@ def install(P: Any) -> None:
             memory_cap = int(usable_gb // spec.estimated_worker_gb)
             launch_allowed = usable_gb >= minimum_launch_headroom_gb
             cap = min(spec.max_workers, memory_cap) if launch_allowed else 0
-            # Running workers are never killed merely because the instantaneous
-            # cap falls. Admission pauses until enough memory returns.
             while pending and len(running) < cap:
                 trade_date = pending.pop(0)
                 attempts[trade_date] = attempts.get(trade_date, 0) + 1
@@ -140,7 +147,6 @@ def install(P: Any) -> None:
                     "stderr": stderr,
                     "stdout_path": stdout_path,
                     "stderr_path": stderr_path,
-                    "started": time.perf_counter(),
                     "attempt": attempt,
                 }
 
@@ -186,14 +192,15 @@ def install(P: Any) -> None:
                 {
                     "version": P.VERSION,
                     "stage": stage,
+                    "runtime_status_suffix": status_suffix,
                     "pending_contract_checks": len(pending),
                     "running": list(running),
                     "verified_or_completed": verified,
-                    "completed_markers": sum(
+                    "completed_markers_in_scope": sum(
                         P._stage_success(config, stage, date).exists()
                         for date in dates
                     ),
-                    "total": len(dates),
+                    "scope_total": len(dates),
                     "failures": len(failures),
                     "max_workers": spec.max_workers,
                     "memory_limited_cap": cap,
@@ -215,6 +222,7 @@ def install(P: Any) -> None:
             "stage": stage,
             "status": "partial_success" if failures else "complete",
             "verified_or_completed": verified,
+            "scope_total": len(dates),
             "failures": failures,
         }
 
