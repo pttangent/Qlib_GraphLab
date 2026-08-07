@@ -1,0 +1,98 @@
+{
+  "raw_index_names": [
+    "instrument",
+    "datetime"
+  ],
+  "raw_index_length": 582728,
+  "raw_index_head": [
+    [
+      "A",
+      "2026-01-02 14:32:00"
+    ],
+    [
+      "A",
+      "2026-01-02 14:33:00"
+    ],
+    [
+      "A",
+      "2026-01-02 14:35:00"
+    ]
+  ],
+  "raw_level0_parse_rate": 0.0,
+  "normalized_index_names": [
+    "instrument",
+    "datetime"
+  ],
+  "normalized_index_length": 582728,
+  "normalized_index_head": [
+    [
+      "A",
+      "2026-01-02 14:32:00"
+    ],
+    [
+      "A",
+      "2026-01-02 14:33:00"
+    ],
+    [
+      "A",
+      "2026-01-02 14:35:00"
+    ]
+  ],
+  "normalized_datetime_min": "2026-01-02 14:32:00+00:00",
+  "normalized_datetime_max": "2026-01-02 20:59:00+00:00",
+  "close_non_null": 582728,
+  "session_valid_first_horizon": 578557,
+  "future_close_first_horizon": 457584,
+  "label_non_null": {
+    "return_open_to_open__h1": 390410,
+    "return_vwap_to_vwap__h1": 390410,
+    "return_close_to_close__h1": 390410,
+    "realized_volatility__h1": 390410,
+    "fwd_abs_return__h1": 390410,
+    "fwd_mfe__h1": 390410,
+    "fwd_mae__h1": 390410,
+    "jump_tail_event__h1": 390410,
+    "liquidity_deterioration__h1": 455701,
+    "execution_cost_proxy__h1": 390410,
+    "return_open_to_open__h5": 380549,
+    "return_vwap_to_vwap__h5": 380549,
+    "return_close_to_close__h5": 380549,
+    "realized_volatility__h5": 266972,
+    "fwd_abs_return__h5": 266972,
+    "fwd_mfe__h5": 266972,
+    "fwd_mae__h5": 266972,
+    "jump_tail_event__h5": 266972,
+    "liquidity_deterioration__h5": 286308,
+    "execution_cost_proxy__h5": 266972,
+    "return_open_to_open__h15": 365385,
+    "return_vwap_to_vwap__h15": 365385,
+    "return_close_to_close__h15": 365385,
+    "realized_volatility__h15": 158844,
+    "fwd_abs_return__h15": 158844,
+    "fwd_mfe__h15": 158844,
+    "fwd_mae__h15": 158844,
+    "jump_tail_event__h15": 158844,
+    "liquidity_deterioration__h15": 164786,
+    "execution_cost_proxy__h15": 158844,
+    "return_open_to_open__h30": 346443,
+    "return_vwap_to_vwap__h30": 346443,
+    "return_close_to_close__h30": 346443,
+    "realized_volatility__h30": 93820,
+    "fwd_abs_return__h30": 93820,
+    "fwd_mfe__h30": 93820,
+    "fwd_mae__h30": 93820,
+    "jump_tail_event__h30": 93820,
+    "liquidity_deterioration__h30": 96316,
+    "execution_cost_proxy__h30": 93820,
+    "return_open_to_open__h60": 312372,
+    "return_vwap_to_vwap__h60": 312372,
+    "return_close_to_close__h60": 312372,
+    "realized_volatility__h60": 41990,
+    "fwd_abs_return__h60": 41990,
+    "fwd_mfe__h60": 41990,
+    "fwd_mae__h60": 41990,
+    "jump_tail_event__h60": 41990,
+    "liquidity_deterioration__h60": 42815,
+    "execution_cost_proxy__h60": 41990
+  }
+}
