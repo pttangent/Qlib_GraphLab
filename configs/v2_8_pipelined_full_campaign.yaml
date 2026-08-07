@@ -40,7 +40,9 @@ pipeline:
   # These are execution-only settings and are deliberately excluded from the
   # materialize semantic/checkpoint contract.
   materialize_internal:
-    peak_slots: 1
+    # Two observed ~37 GB high-water merge phases fit within the 128 GB host
+    # while preserving the 28 GB scheduler reserve.
+    peak_slots: 2
     peak_entry_min_available_gb: 48
     gate_poll_seconds: 0.5
     stale_lease_seconds: 3600
