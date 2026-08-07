@@ -90,7 +90,8 @@ jobs:
           assert "single_weight_path_expansion" in portfolio_opt
           assert "materialize_peak_gate" in materialize_memory
           assert "stream_to_checkpoint_no_wide_concat" in materialize_memory
-          assert "ParquetFile(path).metadata.num_rows" in materialize_memory
+          assert "pq.ParquetFile(path)" in materialize_memory
+          assert "parquet.metadata.num_rows" in materialize_memory
           assert "return frame, runtime" in materialize_memory
           assert "peak_slots: 1" in config
           assert "estimated_worker_gb: 16" in config
