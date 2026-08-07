@@ -30,6 +30,7 @@ jobs:
         run: |
           python -m py_compile \
             nff_research/v2_8_pipeline.py \
+            nff_research/v2_8_detailed_optimization.py \
             nff_research/v2_8_runtime_hardening.py \
             nff_research/v2_8_screen_optimization.py \
             nff_research/v2_8_selection_tracks.py \
@@ -42,14 +43,16 @@ jobs:
             nff_research/v2_8_launch.py \
             tests/test_nff_v2_8_pipeline.py \
             tests/test_nff_v2_8_bootstrap_scheduler.py \
-            tests/test_nff_v2_8_materialize_memory.py
+            tests/test_nff_v2_8_materialize_memory.py \
+            tests/test_nff_v2_8_stage_optimization.py
       - name: Run v2.8 contract tests
-        run: pytest -q tests/test_nff_v2_8_pipeline.py tests/test_nff_v2_8_bootstrap_scheduler.py tests/test_nff_v2_8_materialize_memory.py
+        run: pytest -q tests/test_nff_v2_8_pipeline.py tests/test_nff_v2_8_bootstrap_scheduler.py tests/test_nff_v2_8_materialize_memory.py tests/test_nff_v2_8_stage_optimization.py
       - name: Static staged-DAG guards
         run: |
           python - <<'PY'
           from pathlib import Path
           source = Path("nff_research/v2_8_pipeline.py").read_text(encoding="utf-8")
+          detailed_opt = Path("nff_research/v2_8_detailed_optimization.py").read_text(encoding="utf-8")
           hardening = Path("nff_research/v2_8_runtime_hardening.py").read_text(encoding="utf-8")
           screen_opt = Path("nff_research/v2_8_screen_optimization.py").read_text(encoding="utf-8")
           tracks = Path("nff_research/v2_8_selection_tracks.py").read_text(encoding="utf-8")
@@ -79,6 +82,12 @@ jobs:
           assert "detailed_max_features: 10" in config
           assert "portfolio_max_features: 40" in config
           assert "risk_regime" in config and "cost_liquidity" in config
+          assert "track_streaming" in detailed_opt
+          assert "decile_tracks" in detailed_opt
+          assert "_bounded_internal_executor" in detailed_opt
+          assert "stage_intra_workers" in hardening
+          assert "stage_blas_threads" in hardening
+          assert "OMP_NUM_THREADS" in hardening and "MKL_NUM_THREADS" in hardening
           assert "admission_paused" in hardening
           assert "contract verification" in hardening
           assert "_runtime_dates" in hardening
@@ -87,22 +96,26 @@ jobs:
           assert "only the alpha selection track may emit portfolio candidates" in tracks
           assert "target_association_not_trade_direction" in tracks
           assert "exact first" in strict and "chronological" in strict
-          assert "single_weight_path_expansion" in portfolio_opt
+          assert "single_weight_path_vectorized_expansion" in portfolio_opt
           assert "materialize_peak_gate" in materialize_memory
           assert "stream_to_checkpoint_no_wide_concat" in materialize_memory
           assert "pq.ParquetFile(path)" in materialize_memory
           assert "parquet.metadata.num_rows" in materialize_memory
           assert "return frame, runtime" in materialize_memory
           assert "peak_slots: 1" in config
-          assert "estimated_worker_gb: 16" in config
+          assert "max_workers: 8" in config
+          assert "estimated_worker_gb: 9" in config
+          assert "estimated_worker_gb: 3" in config
           assert "upstream_fingerprint" in source_contract
           assert "candidate_manifest_sha256" in source_contract
           assert "screen_fingerprint_dates" in source_contract
+          assert "detailed_internal" in stage_contracts
           assert "Changing a portfolio threshold must not invalidate physical factor blocks" in stage_contracts
           assert 'run_stage("materialize", training)' in bootstrap
           assert 'run_stage("basic_screen", training)' in bootstrap
           assert 'run_stage("select")' in bootstrap
           assert 'run_stage("materialize", remaining)' in bootstrap
+          assert "DETAILED_OPT.install(PIPELINE)" in launch
           assert "HARDENING.install(PIPELINE)" in launch
           assert "SCREEN_OPT.install(PIPELINE)" in launch
           assert "SELECTION_TRACKS.install(PIPELINE)" in launch
