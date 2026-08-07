@@ -1,0 +1,57 @@
+name: NFF v2.8 staged selection
+
+on:
+  push:
+    branches:
+      - agent/nff-research-pipelined-selection-v2-8
+  pull_request:
+    paths:
+      - "nff_research/v2_8_*.py"
+      - "configs/v2_8_pipelined_full_campaign.yaml"
+      - "tests/test_nff_v2_8_pipeline.py"
+      - ".github/workflows/nff-v2-8.yml"
+
+jobs:
+  pipeline-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Qlib and test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Compile v2.8 entrypoints
+        run: |
+          python -m py_compile \
+            nff_research/v2_8_pipeline.py \
+            nff_research/v2_8_launch.py \
+            tests/test_nff_v2_8_pipeline.py
+      - name: Run v2.8 contract tests
+        run: pytest -q tests/test_nff_v2_8_pipeline.py
+      - name: Static staged-DAG guards
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path("nff_research/v2_8_pipeline.py").read_text(encoding="utf-8")
+          config = Path("configs/v2_8_pipelined_full_campaign.yaml").read_text(encoding="utf-8")
+          required = {
+              "all physical factors screened": "physical_factor_count",
+              "factor-block streaming": "_iter_factor_blocks",
+              "training-only candidate freeze": "portfolio_eligible_after",
+              "candidate-only detailed stage": "candidate_scope\"] == scope",
+              "direction-frozen portfolio": "factors[name].astype(\"float32\") * float(directions[name])",
+              "stage memory budget": "estimated_worker_gb",
+              "independent date-stage success": "_stage_success",
+          }
+          for label, token in required.items():
+              assert token in source, f"missing v2.8 guard: {label}"
+          assert "materialize -> basic_screen -> select -> detailed -> portfolio" in source
+          assert "allow_in_sample_portfolio: false" in config
+          assert "diagnostic_max_features: 120" in config
+          assert "portfolio_max_features: 40" in config
+          PY
