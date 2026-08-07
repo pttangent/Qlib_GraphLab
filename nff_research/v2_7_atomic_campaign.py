@@ -1618,6 +1618,17 @@ def main() -> int:
     parser.add_argument("--run-name")
     parser.add_argument("--research-root")
     parser.add_argument("--controls-path")
+    # Runtime-only scheduler flags are intentionally forwarded to the base
+    # runner. They do not alter the research contract when resuming an
+    # existing run with --resume-existing-contract.
+    parser.add_argument("--run-id")
+    parser.add_argument("--out-root")
+    parser.add_argument("--contract-hash")
+    parser.add_argument("--resume-existing-contract", action="store_true")
+    parser.add_argument("--parallel", type=int)
+    parser.add_argument("--max-parallel", type=int)
+    parser.add_argument("--min-parallel", type=int)
+    parser.add_argument("--memory-min-available-gb", type=float)
     cli = parser.parse_args()
     if cli.start_date:
         config["run"]["start_date"] = cli.start_date
