@@ -30,6 +30,7 @@ jobs:
           python -m py_compile \
             nff_research/v2_8_pipeline.py \
             nff_research/v2_8_runtime_hardening.py \
+            nff_research/v2_8_screen_optimization.py \
             nff_research/v2_8_selection_tracks.py \
             nff_research/v2_8_strict_training_window.py \
             nff_research/v2_8_portfolio_optimization.py \
@@ -45,6 +46,7 @@ jobs:
           from pathlib import Path
           source = Path("nff_research/v2_8_pipeline.py").read_text(encoding="utf-8")
           hardening = Path("nff_research/v2_8_runtime_hardening.py").read_text(encoding="utf-8")
+          screen_opt = Path("nff_research/v2_8_screen_optimization.py").read_text(encoding="utf-8")
           tracks = Path("nff_research/v2_8_selection_tracks.py").read_text(encoding="utf-8")
           strict = Path("nff_research/v2_8_strict_training_window.py").read_text(encoding="utf-8")
           portfolio_opt = Path("nff_research/v2_8_portfolio_optimization.py").read_text(encoding="utf-8")
@@ -71,7 +73,9 @@ jobs:
           assert "portfolio_max_features: 40" in config
           assert "risk_regime" in config and "cost_liquidity" in config
           assert "admission_paused" in hardening
-          assert "with_atomic_context" in hardening
+          assert "contract verification" in hardening
+          assert "rank-mask-cache-v2.8.1" in screen_opt
+          assert "computed_blocks" in screen_opt and "reused_blocks" in screen_opt
           assert "only the alpha selection track may emit portfolio candidates" in tracks
           assert "target_association_not_trade_direction" in tracks
           assert "exact first" in strict and "chronological" in strict
@@ -81,6 +85,7 @@ jobs:
           assert "screen_fingerprint_dates" in source_contract
           assert "Changing a portfolio threshold must not invalidate physical factor blocks" in stage_contracts
           assert "HARDENING.install(PIPELINE)" in launch
+          assert "SCREEN_OPT.install(PIPELINE)" in launch
           assert "SELECTION_TRACKS.install(PIPELINE)" in launch
           assert "STRICT_TRAINING.install(PIPELINE)" in launch
           assert "PORTFOLIO_OPT.install(PIPELINE)" in launch
