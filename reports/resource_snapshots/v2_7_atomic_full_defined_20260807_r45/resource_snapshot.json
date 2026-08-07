@@ -1,13 +1,13 @@
 {
-  "snapshot_utc": "2026-08-07T01:33:35.123949+00:00",
+  "snapshot_utc": "2026-08-07T01:42:21.950517+00:00",
   "run_id": "v2_7_atomic_full_defined_20260807_r45",
   "run_root": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45",
   "status": {
-    "pid": 126428,
+    "pid": 119324,
     "run_id": "v2_7_atomic_full_defined_20260807_r45",
     "out_root": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45",
     "controls_path": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_research\\derived_inputs\\daily_bar_controls_v2_1\\daily_controls_2026-01-02_2026-07-22.parquet",
-    "started_utc": "2026-08-07T01:13:38.760852+00:00",
+    "started_utc": "2026-08-07T01:41:03.040353+00:00",
     "stage": "neutralized_factor_diagnostics",
     "status": "running",
     "total_units": 138,
@@ -15,13 +15,13 @@
     "parallel": 1,
     "running_workers": 1,
     "resources": {
-      "cpu_percent": 22.8,
-      "memory_percent": 36.5,
-      "memory_available_gb": 80.82,
-      "disk_free_gb": 367.67,
+      "cpu_percent": 22.1,
+      "memory_percent": 30.9,
+      "memory_available_gb": 88.03,
+      "disk_free_gb": 367.31,
       "worker_process_count": 2,
-      "worker_rss_total_gb": 25.256,
-      "worker_rss_max_gb": 25.247
+      "worker_rss_total_gb": 14.608,
+      "worker_rss_max_gb": 14.598
     },
     "horizons": [
       1,
@@ -41,10 +41,10 @@
     ],
     "run_contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
     "effective_config": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\effective_config.json",
-    "heartbeat_utc": "2026-08-07T01:33:33.659907+00:00",
+    "heartbeat_utc": "2026-08-07T01:42:16.935761+00:00",
     "running_units": [
       {
-        "trade_date": "2026-02-04"
+        "trade_date": "2026-06-09"
       }
     ],
     "pending_units": 137,
@@ -54,93 +54,115 @@
     "factor_progress_pct": 100.0,
     "factor_completed_blocks": 68,
     "factor_checkpoint_level": "family/window/factor-block",
-    "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-02-04\\factors",
-    "factor_last_event_utc": "2026-08-07T01:24:26.164590+00:00",
-    "factor_current_stage": "ic_and_neutralization",
+    "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-06-09\\factors",
+    "factor_last_event_utc": "2026-08-07T01:41:11.930110+00:00",
+    "factor_current_stage": "date",
     "factor_current_state": "running",
     "factor_current_family": "S",
     "factor_current_window": "30m",
     "factor_current_factors": 1,
     "last_failure": {
-      "trade_date": "2026-06-01",
+      "trade_date": "2026-03-03",
       "attempt": 1,
       "returncode": 4294967295,
-      "error": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n",
-      "stdout": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-01_attempt=1.out.log",
-      "stderr": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-01_attempt=1.err.log",
+      "error": "worker failed without stderr",
+      "stdout": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-03-03_attempt=1.out.log",
+      "stderr": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-03-03_attempt=1.err.log",
       "healing_action": "requeued"
     }
   },
-  "resource_sample_count": 229,
+  "resource_sample_count": 306,
   "resource_summary": {
     "cpu_percent": {
-      "count": 229,
-      "min": 12.1,
-      "median": 41.0,
-      "p90": 54.38000000000001,
+      "count": 306,
+      "min": 10.7,
+      "median": 32.1,
+      "p90": 53.55,
       "max": 71.7,
-      "latest": 22.8
+      "latest": 22.1
     },
     "memory_percent": {
-      "count": 229,
-      "min": 21.0,
-      "median": 54.8,
-      "p90": 78.6,
+      "count": 306,
+      "min": 17.3,
+      "median": 51.8,
+      "p90": 76.1,
       "max": 93.1,
-      "latest": 36.5
+      "latest": 30.9
     },
     "memory_available_gb": {
-      "count": 229,
+      "count": 306,
       "min": 8.8,
-      "median": 57.58,
-      "p90": 75.63800000000003,
-      "max": 100.56,
-      "latest": 80.82
+      "median": 61.41,
+      "p90": 80.215,
+      "max": 105.37,
+      "latest": 88.03
     },
     "worker_rss_total_gb": {
-      "count": 229,
+      "count": 306,
       "min": 0.01,
-      "median": 44.276,
-      "p90": 76.80840000000002,
+      "median": 40.967,
+      "p90": 74.551,
       "max": 96.282,
-      "latest": 25.256
+      "latest": 14.608
     },
     "worker_rss_max_gb": {
-      "count": 229,
+      "count": 306,
       "min": 0.01,
-      "median": 19.578,
-      "p90": 34.09440000000002,
+      "median": 23.7745,
+      "p90": 35.6315,
       "max": 39.394,
-      "latest": 25.247
+      "latest": 14.598
     },
     "disk_free_gb": {
-      "count": 229,
-      "min": 367.67,
-      "median": 372.7,
+      "count": 306,
+      "min": 367.01,
+      "median": 371.15,
       "p90": 375.22,
       "max": 375.23,
-      "latest": 367.67
+      "latest": 367.31
     }
   },
-  "scheduler_tuning_count": 20,
+  "scheduler_tuning_count": 27,
   "latest_scheduler_tuning": {
-    "sample_utc": "2026-08-07T01:33:33.647172+00:00",
+    "sample_utc": "2026-08-07T01:42:06.474773+00:00",
     "previous_parallel": 1,
     "target_parallel": 1,
     "reason": "awaiting_safe_streak",
     "safe_streak": 1,
     "running_workers": 1,
+    "stage_parallel_cap": 2,
+    "active_worker_stages": {
+      "dates": {
+        "2026-06-09": "date"
+      },
+      "counts": {
+        "date": 1
+      },
+      "cap_by_stage": {
+        "date": 3
+      },
+      "effective_cap": 2
+    },
     "resources": {
-      "cpu_percent": 22.8,
-      "memory_percent": 36.5,
-      "memory_available_gb": 80.82,
-      "disk_free_gb": 367.67,
+      "cpu_percent": 18.3,
+      "memory_percent": 38.8,
+      "memory_available_gb": 77.98,
+      "disk_free_gb": 367.31,
       "worker_process_count": 2,
-      "worker_rss_total_gb": 25.256,
-      "worker_rss_max_gb": 25.247
+      "worker_rss_total_gb": 27.811,
+      "worker_rss_max_gb": 27.801
     }
   },
   "factor_progress": [
+    {
+      "trade_date": "2026-02-03",
+      "factor_completed": 0,
+      "factor_expected": 464,
+      "factor_progress_pct": 0.0,
+      "factor_manifest_count": 0,
+      "last_stage": "date",
+      "last_state": "running"
+    },
     {
       "trade_date": "2026-02-04",
       "factor_completed": 464,
@@ -148,6 +170,24 @@
       "factor_progress_pct": 100.0,
       "factor_manifest_count": 32,
       "last_stage": "ic_and_neutralization",
+      "last_state": "running"
+    },
+    {
+      "trade_date": "2026-03-03",
+      "factor_completed": 0,
+      "factor_expected": 464,
+      "factor_progress_pct": 0.0,
+      "factor_manifest_count": 0,
+      "last_stage": "date",
+      "last_state": "running"
+    },
+    {
+      "trade_date": "2026-03-09",
+      "factor_completed": 0,
+      "factor_expected": 464,
+      "factor_progress_pct": 0.0,
+      "factor_manifest_count": 0,
+      "last_stage": "date",
       "last_state": "running"
     },
     {
@@ -165,12 +205,12 @@
       "factor_expected": 464,
       "factor_progress_pct": 100.0,
       "factor_manifest_count": 32,
-      "last_stage": "ic_and_neutralization",
+      "last_stage": "date",
       "last_state": "running"
     }
   ],
   "factor_progress_summary": {
-    "dates_seen": 3,
+    "dates_seen": 6,
     "dates_factor_complete": 3,
     "max_factor_progress_pct": 100.0
   },
@@ -268,11 +308,32 @@
   "worker_log_audit": {
     "files": [
       {
+        "path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-02-03_attempt=1.err.log",
+        "bytes": 0,
+        "has_traceback": false,
+        "has_error": false,
+        "tail": ""
+      },
+      {
         "path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-02-04_attempt=1.err.log",
         "bytes": 559,
         "has_traceback": false,
         "has_error": false,
         "tail": "C:\\Users\\A001\\AppData\\Roaming\\Python\\Python314\\site-packages\\pandas\\core\\arraylike.py:399: RuntimeWarning: overflow encountered in exp\n  result = getattr(ufunc, method)(*inputs, **kwargs)\nD:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n"
+      },
+      {
+        "path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-03-03_attempt=1.err.log",
+        "bytes": 0,
+        "has_traceback": false,
+        "has_error": false,
+        "tail": ""
+      },
+      {
+        "path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-03-09_attempt=1.err.log",
+        "bytes": 0,
+        "has_traceback": false,
+        "has_error": false,
+        "tail": ""
       },
       {
         "path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-01_attempt=1.err.log",
@@ -283,16 +344,16 @@
       },
       {
         "path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-09_attempt=1.err.log",
-        "bytes": 369,
+        "bytes": 0,
         "has_traceback": false,
         "has_error": false,
-        "tail": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n"
+        "tail": ""
       }
     ],
-    "nonempty_log_count": 3,
+    "nonempty_log_count": 2,
     "traceback_or_exception_count": 0,
     "traceback_or_exception_logs": [],
-    "warning_only_count": 3
+    "warning_only_count": 2
   },
   "contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
   "git_commit": "9caaa5a60b88fa03bc722be39d39f1f03e2bfc80",

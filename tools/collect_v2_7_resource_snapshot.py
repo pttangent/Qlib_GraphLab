@@ -213,6 +213,7 @@ def main() -> int:
         "run_contract.json",
         "effective_config.json",
         "factor_progress.json",
+        "runtime_resume.json",
     ):
         source = run_root / filename
         if source.exists():

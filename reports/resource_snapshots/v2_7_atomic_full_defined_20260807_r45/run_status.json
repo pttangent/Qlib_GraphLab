@@ -1,9 +1,9 @@
 {
-  "pid": 126428,
+  "pid": 119324,
   "run_id": "v2_7_atomic_full_defined_20260807_r45",
   "out_root": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45",
   "controls_path": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_research\\derived_inputs\\daily_bar_controls_v2_1\\daily_controls_2026-01-02_2026-07-22.parquet",
-  "started_utc": "2026-08-07T01:13:38.760852+00:00",
+  "started_utc": "2026-08-07T01:41:03.040353+00:00",
   "stage": "neutralized_factor_diagnostics",
   "status": "running",
   "total_units": 138,
@@ -11,13 +11,13 @@
   "parallel": 1,
   "running_workers": 1,
   "resources": {
-    "cpu_percent": 22.8,
-    "memory_percent": 36.5,
-    "memory_available_gb": 80.82,
-    "disk_free_gb": 367.67,
+    "cpu_percent": 22.1,
+    "memory_percent": 30.9,
+    "memory_available_gb": 88.03,
+    "disk_free_gb": 367.31,
     "worker_process_count": 2,
-    "worker_rss_total_gb": 25.256,
-    "worker_rss_max_gb": 25.247
+    "worker_rss_total_gb": 14.608,
+    "worker_rss_max_gb": 14.598
   },
   "horizons": [
     1,
@@ -37,10 +37,10 @@
   ],
   "run_contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
   "effective_config": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\effective_config.json",
-  "heartbeat_utc": "2026-08-07T01:33:33.659907+00:00",
+  "heartbeat_utc": "2026-08-07T01:42:16.935761+00:00",
   "running_units": [
     {
-      "trade_date": "2026-02-04"
+      "trade_date": "2026-06-09"
     }
   ],
   "pending_units": 137,
@@ -50,20 +50,20 @@
   "factor_progress_pct": 100.0,
   "factor_completed_blocks": 68,
   "factor_checkpoint_level": "family/window/factor-block",
-  "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-02-04\\factors",
-  "factor_last_event_utc": "2026-08-07T01:24:26.164590+00:00",
-  "factor_current_stage": "ic_and_neutralization",
+  "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-06-09\\factors",
+  "factor_last_event_utc": "2026-08-07T01:41:11.930110+00:00",
+  "factor_current_stage": "date",
   "factor_current_state": "running",
   "factor_current_family": "S",
   "factor_current_window": "30m",
   "factor_current_factors": 1,
   "last_failure": {
-    "trade_date": "2026-06-01",
+    "trade_date": "2026-03-03",
     "attempt": 1,
     "returncode": 4294967295,
-    "error": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n",
-    "stdout": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-01_attempt=1.out.log",
-    "stderr": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-01_attempt=1.err.log",
+    "error": "worker failed without stderr",
+    "stdout": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-03-03_attempt=1.out.log",
+    "stderr": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-03-03_attempt=1.err.log",
     "healing_action": "requeued"
   }
 }

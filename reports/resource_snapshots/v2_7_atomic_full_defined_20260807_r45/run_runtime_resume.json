@@ -1,0 +1,12 @@
+{
+  "resumed_utc": "2026-08-07T01:41:02.963437+00:00",
+  "existing_contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
+  "current_git_commit": "f67b009d5681ca61376388536d6b89b25147da97",
+  "runtime_only_overrides": {
+    "parallel": 1,
+    "max_parallel": 2,
+    "min_parallel": 1,
+    "memory_min_available_gb": 40.0
+  },
+  "note": "Research contract is unchanged; scheduler-only overrides are recorded separately."
+}
