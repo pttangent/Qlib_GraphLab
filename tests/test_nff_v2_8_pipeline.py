@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pandas as pd
+import pytest
 
 from nff_research import v2_8_pipeline as P
 from nff_research import v2_8_launch as LAUNCH
 from nff_research import v2_8_portfolio_optimization as PORTFOLIO_OPT
 from nff_research import v2_8_selection_tracks as TRACKS
+from nff_research import v2_8_stage_contracts as STAGE_CONTRACTS
 
 
 def test_factor_family_and_candidate_quotas() -> None:
@@ -58,8 +62,8 @@ def test_cost_scenarios_reuse_one_weight_path() -> None:
     assert len(expanded) == 6
     assert set(expanded["cost_bps_per_turnover"]) == {0.0, 5.0, 10.0}
     ten = expanded[expanded["cost_bps_per_turnover"] == 10.0].reset_index(drop=True)
-    assert ten.loc[0, "cost"] == 0.0005
-    assert ten.loc[0, "net_return"] == 0.0015
+    assert ten.loc[0, "cost"] == pytest.approx(0.0005)
+    assert ten.loc[0, "net_return"] == pytest.approx(0.0015)
     assert set(expanded["cost_scenario_source"]) == {"single_weight_path_expansion"}
 
 
@@ -110,14 +114,31 @@ def test_stage_specs_are_decoupled() -> None:
     assert specs["portfolio"].max_workers == 7
 
 
+def test_stage_contracts_do_not_invalidate_materialize_for_selection_change() -> None:
+    base = {
+        "run": {"start_date": "2026-01-02", "end_date": "2026-07-22", "horizons": [1, 5]},
+        "atomic": {"factor_block_size": 8},
+        "local_paths": {"warehouse_root": "D:/warehouse"},
+        "study": {"physical_windows": {"minute_nvg": ["10m"]}},
+        "factor_resolution_policy": {"expected_physical_specs": 464},
+        "labels": {"entry_offset_minutes": 1},
+        "selection": {"portfolio_max_features": 40},
+        "portfolio_proxy": {"costs_bps_one_way": [1, 5]},
+    }
+    changed = deepcopy(base)
+    changed["selection"]["portfolio_max_features"] = 20
+    assert STAGE_CONTRACTS.contract_payload(P, base, "materialize") == STAGE_CONTRACTS.contract_payload(P, changed, "materialize")
+    assert STAGE_CONTRACTS.contract_payload(P, base, "select") != STAGE_CONTRACTS.contract_payload(P, changed, "select")
+
+
 def test_runtime_hardening_is_installed_by_canonical_launcher() -> None:
     assert LAUNCH.main is P.main
     assert P._run_date_stage.__module__.endswith("v2_8_runtime_hardening")
-    assert P.materialize_date.__module__.endswith("v2_8_source_contract")
-    assert P.basic_screen_date.__module__.endswith("v2_8_source_contract")
-    assert P.select_candidates.__module__.endswith("v2_8_source_contract")
-    assert P.detailed_date.__module__.endswith("v2_8_source_contract")
-    assert P.portfolio_date.__module__.endswith("v2_8_source_contract")
+    assert P.materialize_date.__module__.endswith("v2_8_stage_contracts")
+    assert P.basic_screen_date.__module__.endswith("v2_8_stage_contracts")
+    assert P.select_candidates.__module__.endswith("v2_8_stage_contracts")
+    assert P.detailed_date.__module__.endswith("v2_8_stage_contracts")
+    assert P.portfolio_date.__module__.endswith("v2_8_stage_contracts")
     assert P._selected_portfolio_proxy.__module__.endswith("v2_8_portfolio_optimization")
 
 
@@ -135,6 +156,7 @@ def test_pipeline_source_contains_training_freeze_guards() -> None:
     ).read_text(encoding="utf-8")
     tracks = pathlib(TRACKS.__file__).read_text(encoding="utf-8")
     portfolio_opt = pathlib(PORTFOLIO_OPT.__file__).read_text(encoding="utf-8")
+    stage_contracts = pathlib(STAGE_CONTRACTS.__file__).read_text(encoding="utf-8")
     assert "portfolio_eligible_after" in source
     assert "skipped_training_period" in source
     assert "direction_contract" in source
@@ -150,3 +172,4 @@ def test_pipeline_source_contains_training_freeze_guards() -> None:
     assert "only the alpha selection track may emit portfolio candidates" in tracks
     assert "target_association_not_trade_direction" in tracks
     assert "single_weight_path_expansion" in portfolio_opt
+    assert "Changing a portfolio threshold must not invalidate physical factor blocks" in stage_contracts
