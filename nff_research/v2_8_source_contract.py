@@ -119,12 +119,9 @@ def install(P: Any) -> None:
 
     def frozen_screen_dates(config: Mapping[str, Any]) -> list[str]:
         train_days = int(config.get("selection", {}).get("train_days", 60))
-        completed = [
-            date
-            for date in P._dates(config)
-            if P._stage_success(config, "basic_screen", date).exists()
-        ]
-        return completed[:train_days]
+        # This is the exact chronological window. The strict-training wrapper
+        # prevents selection until every one of these dates has completed.
+        return P._dates(config)[:train_days]
 
     def screen_fingerprint(config: Mapping[str, Any]) -> str:
         # Candidate selection consumes only the frozen chronological training
@@ -174,7 +171,10 @@ def install(P: Any) -> None:
                 existing.get("upstream_fingerprint") != upstream
                 or existing.get("candidate_manifest_sha256") != candidate_sha
             )
-            if success.exists() and stale:
+            # An interrupted prior attempt may leave the inner v2.7 cache even
+            # though the outer stage never wrote _SUCCESS. Invalidate whenever
+            # the stored contract is stale, not only after a completed stage.
+            if stale:
                 _invalidate(success)
                 _invalidate_internal_stage_cache(P, config, trade_date, stage)
             result = original(config, trade_date)
