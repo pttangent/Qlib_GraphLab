@@ -74,7 +74,9 @@ def test_portfolio_cost_expansion_preserves_cost_major_order_and_math() -> None:
     assert out["cost_bps_per_turnover"].tolist() == [0.0, 0.0, 10.0, 10.0]
     np.testing.assert_allclose(out["cost"].to_numpy(), [0.0, 0.0, 0.001, 0.0005])
     np.testing.assert_allclose(out["net_return"].to_numpy(), [0.01, -0.02, 0.009, -0.0205])
-    assert set(out["cost_scenario_source"]) == {"single_weight_path_vectorized_expansion"}
+    # Keep the historical output contract while the implementation itself is
+    # vectorized; downstream audits should not change merely for a speedup.
+    assert set(out["cost_scenario_source"]) == {"single_weight_path_expansion"}
 
 
 def test_stage_worker_env_caps_hidden_blas_threads() -> None:
