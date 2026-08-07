@@ -1,25 +1,25 @@
 # v2.7 Resource Snapshot: v2_7_atomic_full_defined_20260807_r45
 
-Snapshot UTC: `2026-08-07T02:00:27.593167+00:00`
+Snapshot UTC: `2026-08-07T02:03:11.148240+00:00`
 Status: `running`; stage: `neutralized_factor_diagnostics`
-Progress: `0/138` dates; running `1`; pending `137`; failures `0`.
+Progress: `0/138` dates; running `2`; pending `136`; failures `0`.
 Contract: `1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31`; git: `9caaa5a60b88fa03bc722be39d39f1f03e2bfc80`
 
 ## Resource Summary
 
 | Metric | Min | Median | P90 | Max | Latest |
 |---|---:|---:|---:|---:|---:|
-| CPU % | 9.300 | 29.500 | 50.220 | 73.700 | 19.600 |
-| Memory % | 17.200 | 47.600 | 71.380 | 93.100 | 43.500 |
-| Available memory GB | 8.800 | 66.720 | 87.696 | 105.410 | 71.900 |
-| Worker RSS total GB | 0.010 | 36.000 | 68.314 | 96.282 | 32.948 |
-| Worker RSS max GB | 0.010 | 22.081 | 35.303 | 39.394 | 32.939 |
-| Disk free GB | 367.010 | 367.330 | 375.010 | 375.230 | 367.300 |
+| CPU % | 9.300 | 28.700 | 50.000 | 73.700 | 29.200 |
+| Memory % | 17.200 | 47.600 | 71.110 | 93.100 | 48.100 |
+| Available memory GB | 8.800 | 66.695 | 87.011 | 105.410 | 66.120 |
+| Worker RSS total GB | 0.010 | 36.668 | 68.095 | 96.282 | 38.357 |
+| Worker RSS max GB | 0.010 | 23.738 | 35.633 | 39.394 | 37.489 |
+| Disk free GB | 366.100 | 367.320 | 374.942 | 375.230 | 366.100 |
 
 ## Scheduling
 
-Resource samples: `509`; scheduler tuning events: `45`.
-Latest tuning: `{"sample_utc": "2026-08-07T01:59:47.011534+00:00", "previous_parallel": 2, "target_parallel": 1, "reason": "active_worker_drain", "drain_actions": [{"trade_date": "2026-06-01", "pid": 16004, "rss_gb": 35.633, "reason": "memory_guard", "action": "terminate_and_requeue"}], "active_worker_stages": {"dates": {"2026-06-09": "ic_and_neutralization", "2026-06-01": "ic_and_neutralization"}, "counts": {"ic_and_neutralization": 2}, "cap_by_stage": {"ic_and_neutralization": 3}, "effective_cap": 2}, "resources": {"cpu_percent": 30.3, "memory_percent": 71.8, "memory_available_gb": 35.94, "disk_free_gb": 367.3, "worker_process_count": 3, "worker_rss_total_gb": 68.794, "worker_rss_max_gb": 35.643}}`
+Resource samples: `540`; scheduler tuning events: `48`.
+Latest tuning: `{"sample_utc": "2026-08-07T02:02:55.391701+00:00", "previous_parallel": 1, "target_parallel": 2, "reason": "cpu_headroom_projected_worker_rss", "safe_streak": 3, "running_workers": 1, "stage_parallel_cap": 2, "active_worker_stages": {"dates": {"2026-06-09": "ic_and_neutralization"}, "counts": {"ic_and_neutralization": 1}, "cap_by_stage": {"ic_and_neutralization": 3}, "effective_cap": 2}, "resources": {"cpu_percent": 23.7, "memory_percent": 47.8, "memory_available_gb": 66.43, "disk_free_gb": 366.1, "worker_process_count": 2, "worker_rss_total_gb": 37.766, "worker_rss_max_gb": 37.756}}`
 
 ## Factor Progress
 
@@ -28,7 +28,7 @@ Dates with checkpoints: `6`; dates at `464/464`: `3`; max factor progress: `100.
 | Date | Factors | Progress | Last stage | State |
 |---|---:|---:|---|---|
 | 2026-02-03 | 0/464 | 0.000% | date | running |
-| 2026-02-04 | 464/464 | 100.000% | ic_and_neutralization | running |
+| 2026-02-04 | 464/464 | 100.000% | date | running |
 | 2026-03-03 | 0/464 | 0.000% | date | running |
 | 2026-03-09 | 0/464 | 0.000% | date | running |
 | 2026-06-01 | 464/464 | 100.000% | ic_and_neutralization | running |
@@ -48,6 +48,6 @@ Dates with checkpoints: `6`; dates at `464/464`: `3`; max factor progress: `100.
 
 ## Audit Notes
 
-Non-empty worker stderr logs: `3`; traceback/exception logs: `0`; warning-only logs: `3`.
+Non-empty worker stderr logs: `2`; traceback/exception logs: `0`; warning-only logs: `2`.
 This is a live snapshot. It does not assert that the 138-day campaign is complete.
 The benchmark stage timing is from the completed one-day run and is included to expose the portfolio_proxy bottleneck.
