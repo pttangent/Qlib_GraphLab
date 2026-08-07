@@ -11,9 +11,11 @@ if str(REPO_ROOT) not in sys.path:
 
 from nff_research import v2_8_pipeline as PIPELINE
 from nff_research import v2_8_runtime_hardening as HARDENING
+from nff_research import v2_8_selection_tracks as SELECTION_TRACKS
 from nff_research import v2_8_source_contract as SOURCE_CONTRACT
 
 HARDENING.install(PIPELINE)
+SELECTION_TRACKS.install(PIPELINE)
 SOURCE_CONTRACT.install(PIPELINE)
 main = PIPELINE.main
 
