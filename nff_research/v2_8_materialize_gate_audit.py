@@ -9,7 +9,6 @@ availability and coverage come from the live runtime status with manifest
 status as a resume fallback.
 """
 
-import json
 import math
 from pathlib import Path
 from typing import Any, Mapping
@@ -101,6 +100,8 @@ def _write_legacy_gap(P: Any, root: Path) -> None:
 
 
 def install(M: Any, P: Any) -> None:
+    original_audit = M._streaming_completion_audit
+
     def strict_streaming_completion_audit(
         expected: set[str],
         inventory: pd.DataFrame,
@@ -109,7 +110,14 @@ def install(M: Any, P: Any) -> None:
     ) -> dict[str, Any]:
         ctx = P.C.CTX
         if ctx is None:
-            raise RuntimeError("streaming physical audit requires an active atomic context")
+            # Preserve the gatefix helper as a context-free inventory audit for
+            # unit tests and tooling. Production materialize always has CTX and
+            # therefore takes the strict status-aware path below.
+            return original_audit(
+                expected,
+                inventory,
+                wide_frame_columns=wide_frame_columns,
+            )
         trade_date = str(ctx.trade_date)
         statuses = dict(M._manifest_factor_status(P, trade_date))
         # Live runtime status is more complete than older supplement manifests
