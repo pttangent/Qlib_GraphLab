@@ -132,6 +132,18 @@ def test_stage_specs_are_decoupled() -> None:
     assert specs["portfolio"].max_workers == 7
 
 
+def test_dates_are_sorted_before_training_window_freeze(monkeypatch) -> None:
+    monkeypatch.setattr(
+        P.R,
+        "load_dates",
+        lambda _start, _end: ["2026-01-06", "2026-01-02", "2026-01-05"],
+    )
+    config = {
+        "run": {"start_date": "2026-01-02", "end_date": "2026-01-06"}
+    }
+    assert P._dates(config) == ["2026-01-02", "2026-01-05", "2026-01-06"]
+
+
 def test_stage_contracts_do_not_invalidate_materialize_for_selection_change() -> None:
     base = {
         "run": {

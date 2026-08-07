@@ -155,7 +155,14 @@ def _stage_success(config: Mapping[str, Any], stage: str, trade_date: str) -> Pa
 
 
 def _dates(config: Mapping[str, Any]) -> list[str]:
-    return list(R.load_dates(str(config["run"]["start_date"]), str(config["run"]["end_date"])))
+    # Warehouse catalog enumeration is not a training-window ordering
+    # contract; freeze candidates on an explicit chronological sequence.
+    return sorted(
+        str(value)
+        for value in R.load_dates(
+            str(config["run"]["start_date"]), str(config["run"]["end_date"])
+        )
+    )
 
 
 def _factor_manifests(config: Mapping[str, Any], trade_date: str) -> list[Path]:
