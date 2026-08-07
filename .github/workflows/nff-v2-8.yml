@@ -96,7 +96,8 @@ jobs:
           assert "only the alpha selection track may emit portfolio candidates" in tracks
           assert "target_association_not_trade_direction" in tracks
           assert "exact first" in strict and "chronological" in strict
-          assert "single_weight_path_vectorized_expansion" in portfolio_opt
+          assert "single_weight_path_expansion" in portfolio_opt
+          assert "np.repeat" in portfolio_opt and "np.tile" in portfolio_opt
           assert "materialize_peak_gate" in materialize_memory
           assert "stream_to_checkpoint_no_wide_concat" in materialize_memory
           assert "pq.ParquetFile(path)" in materialize_memory
