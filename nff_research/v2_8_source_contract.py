@@ -56,6 +56,26 @@ def _invalidate(success: Path) -> None:
     success.unlink(missing_ok=True)
 
 
+def _invalidate_internal_stage_cache(
+    P: Any,
+    config: Mapping[str, Any],
+    trade_date: str,
+    stage: str,
+) -> None:
+    stages = (
+        P._run_root(config)
+        / "atomic_checkpoints"
+        / f"date={trade_date}"
+        / "stages"
+    )
+    names = {
+        "detailed": ("decile_curves.parquet", "decile_curves.json"),
+        "portfolio": ("portfolio_proxy.parquet", "portfolio_proxy.json"),
+    }
+    for name in names.get(stage, ()):
+        (stages / name).unlink(missing_ok=True)
+
+
 def install(P: Any) -> None:
     original_materialize = P.materialize_date
     original_basic = P.basic_screen_date
@@ -132,11 +152,13 @@ def install(P: Any) -> None:
             success = P._stage_success(config, stage, trade_date)
             meta_path = root / "meta.json"
             existing = _read_meta(meta_path)
-            if success.exists() and (
+            stale = (
                 existing.get("upstream_fingerprint") != upstream
                 or existing.get("candidate_manifest_sha256") != candidate_sha
-            ):
+            )
+            if success.exists() and stale:
                 _invalidate(success)
+                _invalidate_internal_stage_cache(P, config, trade_date, stage)
             result = original(config, trade_date)
             _write_meta(
                 P,
