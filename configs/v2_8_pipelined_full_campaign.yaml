@@ -35,11 +35,24 @@ pipeline:
   memory_reserve_gb: 28
   minimum_launch_headroom_gb: 8
   portfolio_threads: 4
+  # Materialize workers may coexist, but only a bounded number may enter the
+  # short warehouse-load + supplement/sketch/condition/venue wide-merge peak.
+  # These are execution-only settings and are deliberately excluded from the
+  # materialize semantic/checkpoint contract.
+  materialize_internal:
+    peak_slots: 1
+    peak_entry_min_available_gb: 48
+    gate_poll_seconds: 0.5
+    stale_lease_seconds: 3600
+    stream_factor_blocks: true
+    release_arrow_memory: true
   stages:
-    # Four date processes × four intra-date threads is the initial 16-core cap.
+    # Four date processes remain available.  A cross-process peak gate prevents
+    # all four from simultaneously reaching the observed 25-30+ GB high-water
+    # substage; completed factor blocks stream directly to checkpoint storage.
     materialize:
       max_workers: 4
-      estimated_worker_gb: 12
+      estimated_worker_gb: 16
     # Raw screen streams eight-factor blocks and can use process-level CPU width.
     basic_screen:
       max_workers: 16
