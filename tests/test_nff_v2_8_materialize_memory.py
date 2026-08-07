@@ -47,8 +47,18 @@ def _fake_pipeline(tmp_path: Path):
     )
     specs = pd.DataFrame(
         [
-            {"family": "A", "window": "10m", "prototype_id": "A01", "factor_id": "factor__a01__w10m"},
-            {"family": "A", "window": "10m", "prototype_id": "A02", "factor_id": "factor__a02__w10m"},
+            {
+                "family": "A",
+                "window": "10m",
+                "prototype_id": "A01",
+                "factor_id": "factor__a01__w10m",
+            },
+            {
+                "family": "A",
+                "window": "10m",
+                "prototype_id": "A02",
+                "factor_id": "factor__a02__w10m",
+            },
         ]
     )
     p = SimpleNamespace(C=c, V26=SimpleNamespace(SPEC_REGISTRY=specs))
@@ -67,13 +77,23 @@ def test_streaming_factor_blocks_are_not_concatenated_back(tmp_path: Path) -> No
     assert result is frame
     assert list(result.columns) == ["base"]
     assert set(runtime) == {"factor__a01__w10m", "factor__a02__w10m"}
-    manifest = tmp_path / "atomic" / "factors" / "family=A" / "window=10m" / "manifest.json"
+    manifest = (
+        tmp_path
+        / "atomic"
+        / "factors"
+        / "family=A"
+        / "window=10m"
+        / "manifest.json"
+    )
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     assert payload["materialization_mode"] == "stream_to_checkpoint_no_wide_concat"
     assert len(payload["blocks"]) == 2
 
 
-def test_checkpoint_reuse_uses_parquet_metadata_not_dataframe_load(tmp_path: Path, monkeypatch) -> None:
+def test_checkpoint_reuse_uses_parquet_metadata_not_dataframe_load(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     p, _ = _fake_pipeline(tmp_path)
     index = pd.MultiIndex.from_product(
         [["A"], pd.date_range("2026-01-02 14:30", periods=4, freq="min")],
@@ -97,13 +117,12 @@ def test_checkpoint_reuse_uses_parquet_metadata_not_dataframe_load(tmp_path: Pat
     assert set(runtime) == {"factor__a01__w10m", "factor__a02__w10m"}
 
 
-def test_peak_gate_serializes_high_water_phase_and_releases_slot(tmp_path: Path, monkeypatch) -> None:
+def test_peak_gate_trims_before_releasing_slot(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         M.psutil,
         "virtual_memory",
         lambda: SimpleNamespace(available=96 * 1024**3),
     )
-    monkeypatch.setattr(M, "_memory_trim", lambda: {"rss_before_gb": 1.0, "rss_after_gb": 1.0})
     p = SimpleNamespace(
         _pipeline_root=lambda config: tmp_path,
         C=SimpleNamespace(_event=lambda *args, **kwargs: None),
@@ -121,7 +140,20 @@ def test_peak_gate_serializes_high_water_phase_and_releases_slot(tmp_path: Path,
     lease = M._acquire_peak_lease(p, config, "2026-01-02")
     assert lease.path.exists()
     assert lease.slot == 0
+
+    observed = {}
+
+    def trim_while_owned():
+        observed["lease_exists_during_trim"] = lease.path.exists()
+        observed["active_during_trim"] = M._ACTIVE_LEASE is lease
+        return {"rss_before_gb": 2.0, "rss_after_gb": 1.0}
+
+    monkeypatch.setattr(M, "_memory_trim", trim_while_owned)
     M._release_peak_lease(p, "test")
+    assert observed == {
+        "lease_exists_during_trim": True,
+        "active_during_trim": True,
+    }
     assert not lease.path.exists()
     assert M._ACTIVE_LEASE is None
 
@@ -133,7 +165,12 @@ def test_operational_materialize_memory_settings_do_not_change_semantic_contract
         V26=SimpleNamespace(FULL_FACTOR_NAMES=["f1", "f2"]),
     )
     base = {
-        "run": {"start_date": "2026-01-02", "end_date": "2026-07-22", "horizons": [1, 5], "min_cross_section_n": 30},
+        "run": {
+            "start_date": "2026-01-02",
+            "end_date": "2026-07-22",
+            "horizons": [1, 5],
+            "min_cross_section_n": 30,
+        },
         "local_paths": {"warehouse_root": "D:/warehouse"},
         "study": {},
         "factor_resolution_policy": {},
@@ -142,12 +179,23 @@ def test_operational_materialize_memory_settings_do_not_change_semantic_contract
         "pipeline": {
             "controls_path": "D:/controls.parquet",
             "materialize_internal": {"peak_slots": 1},
-            "stages": {"materialize": {"max_workers": 4, "estimated_worker_gb": 16}},
+            "stages": {
+                "materialize": {
+                    "max_workers": 4,
+                    "estimated_worker_gb": 16,
+                }
+            },
         },
     }
     changed = json.loads(json.dumps(base))
     changed["pipeline"]["materialize_internal"]["peak_slots"] = 2
     changed["pipeline"]["stages"]["materialize"]["estimated_worker_gb"] = 30
-    assert CONTRACTS.contract_payload(p, base, "materialize") == CONTRACTS.contract_payload(
-        p, changed, "materialize"
+    assert CONTRACTS.contract_payload(
+        p,
+        base,
+        "materialize",
+    ) == CONTRACTS.contract_payload(
+        p,
+        changed,
+        "materialize",
     )
