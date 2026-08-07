@@ -4,6 +4,7 @@ import pandas as pd
 
 from nff_research import v2_8_pipeline as P
 from nff_research import v2_8_launch as LAUNCH
+from nff_research import v2_8_selection_tracks as TRACKS
 
 
 def test_factor_family_and_candidate_quotas() -> None:
@@ -40,6 +41,35 @@ def test_selected_portfolio_variants_never_reverse_frozen_direction() -> None:
     assert paired
     modes = {item["gate_mode"] for item in paired}
     assert modes == {"ungated_shared_sample", "exclude_top20"}
+
+
+def test_default_selection_tracks_separate_alpha_and_risk() -> None:
+    tracks = {item["name"]: item for item in TRACKS._track_defaults()}
+    assert tracks["alpha"]["portfolio_max_features"] == 40
+    assert tracks["risk_regime"]["portfolio_max_features"] == 0
+    assert tracks["cost_liquidity"]["portfolio_max_features"] == 0
+    assert "realized_volatility" in tracks["risk_regime"]["label_families"]
+    assert "execution_cost_proxy" in tracks["cost_liquidity"]["label_families"]
+
+
+def test_risk_track_direction_is_not_trade_direction() -> None:
+    data = pd.DataFrame(
+        {
+            "feature": ["full_factor__g01__w15m"] * 3,
+            "factor_family": ["G"] * 3,
+            "label_family": ["realized_volatility"] * 3,
+            "horizon_bars": [15] * 3,
+            "universe": ["final_trading_universe"] * 3,
+            "rank_ic_method": ["minute_mean_cs_rank_ic"] * 3,
+            "rank_ic_mean": [0.10, 0.12, 0.08],
+            "coverage": [0.9, 0.9, 0.9],
+            "rank_ic_positive_ratio": [0.7, 0.8, 0.7],
+        }
+    )
+    track = next(item for item in TRACKS._track_defaults() if item["name"] == "risk_regime")
+    result = TRACKS._track_summary(data, track, "final_trading_universe")
+    assert len(result) == 1
+    assert result.iloc[0]["direction_semantics"] == "target_association_not_trade_direction"
 
 
 def test_stage_specs_are_decoupled() -> None:
@@ -79,6 +109,7 @@ def test_pipeline_source_contains_training_freeze_guards() -> None:
     source_contract = pathlib(
         __import__("nff_research.v2_8_source_contract", fromlist=["x"]).__file__
     ).read_text(encoding="utf-8")
+    tracks = pathlib(TRACKS.__file__).read_text(encoding="utf-8")
     assert "portfolio_eligible_after" in source
     assert "skipped_training_period" in source
     assert "direction_contract" in source
@@ -90,3 +121,5 @@ def test_pipeline_source_contains_training_freeze_guards() -> None:
     assert "upstream_fingerprint" in source_contract
     assert "candidate_manifest_sha256" in source_contract
     assert "screen_fingerprint" in source_contract
+    assert "only the alpha selection track may emit portfolio candidates" in tracks
+    assert "target_association_not_trade_direction" in tracks
