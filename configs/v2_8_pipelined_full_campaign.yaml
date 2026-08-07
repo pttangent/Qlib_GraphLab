@@ -13,9 +13,9 @@ run:
 
 atomic:
   factor_block_size: 8
-  # Four intra-date threads are reserved for warehouse/factor operations.
-  # Cheap raw-screen workers are mainly process-parallel and may use a larger
-  # date-worker count.
+  # Four intra-date threads remain the fallback for materialize/basic-screen.
+  # Detailed/portfolio override this below because measured RSS favors wider
+  # date-level parallelism over deep per-date threading.
   intra_date_workers: 4
   exact_future_lookup_cache: true
   residual_matrix_cache: true
@@ -34,24 +34,61 @@ pipeline:
   controls_path: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_research/derived_inputs/daily_bar_controls_v2_1/daily_controls_2026-01-02_2026-07-22.parquet"
   memory_reserve_gb: 28
   minimum_launch_headroom_gb: 8
-  portfolio_threads: 4
+  # Portfolio variants are already batched across all selected factors.  Two
+  # sleeve threads per date plus wider date parallelism avoids nested thread
+  # oversubscription.
+  portfolio_threads: 2
+  stage_intra_workers:
+    detailed: 2
+    portfolio: 2
+  stage_blas_threads:
+    detailed: 2
+    portfolio: 1
+  # Track-aware detailed execution keeps expensive return neutralization and
+  # deciles on Alpha only. Risk/Regime and Cost/Liquidity keep their selected
+  # target diagnostics without running unrelated return deciles.
+  detailed_internal:
+    execution_mode: track_streaming
+    decile_tracks: [alpha]
+    track_label_families:
+      alpha: [return_open_to_open, return_vwap_to_vwap, return_close_to_close]
+      risk_regime: [realized_volatility, liquidity_deterioration, jump_tail_event]
+      cost_liquidity: [execution_cost_proxy, liquidity_deterioration]
+  # Materialize workers may coexist, but only a bounded number may enter the
+  # short warehouse-load + supplement/sketch/condition/venue wide-merge peak.
+  # These are execution-only settings and are deliberately excluded from the
+  # materialize semantic/checkpoint contract.
+  materialize_internal:
+    # Two observed ~37 GB high-water merge phases fit within the 128 GB host
+    # while preserving the 28 GB scheduler reserve and 48 GB entry threshold.
+    peak_slots: 2
+    peak_entry_min_available_gb: 48
+    gate_poll_seconds: 0.5
+    stale_lease_seconds: 3600
+    stream_factor_blocks: true
+    release_arrow_memory: true
   stages:
-    # Four date processes × four intra-date threads is the initial 16-core cap.
+    # Four date processes remain available.  A cross-process peak gate prevents
+    # all four from simultaneously reaching the observed 25-30+ GB high-water
+    # substage; completed factor blocks stream directly to checkpoint storage.
     materialize:
       max_workers: 4
-      estimated_worker_gb: 12
+      estimated_worker_gb: 16
     # Raw screen streams eight-factor blocks and can use process-level CPU width.
     basic_screen:
       max_workers: 16
       estimated_worker_gb: 5
-    # Candidate-only residualization/deciles remain the heaviest RSS stage.
+    # Three-day benchmark observed only ~3.9-6.7 GB RSS/worker. Use eight dates
+    # × two intra-date workers, keeping the 28 GB machine reserve and admission
+    # guard. Track streaming further lowers retained candidate matrices.
     detailed:
-      max_workers: 4
-      estimated_worker_gb: 18
-    # Four date processes × four sleeve threads avoids CPU oversubscription.
+      max_workers: 8
+      estimated_worker_gb: 9
+    # Portfolio measured ~1.6 GB/worker. Use the same 8×2 CPU shape; its
+    # training-frozen 40-factor path remains downstream of detailed selection.
     portfolio:
-      max_workers: 4
-      estimated_worker_gb: 10
+      max_workers: 8
+      estimated_worker_gb: 3
 
 selection:
   mode: frozen_training_window

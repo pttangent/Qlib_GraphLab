@@ -66,6 +66,12 @@ def contract_payload(P: Any, config: Mapping[str, Any], stage: str) -> dict[str,
             "neutralization": config.get("neutralization", {}),
             "labels": config.get("labels", {}),
             "factor_block_size": config.get("atomic", {}).get("factor_block_size"),
+            # Track-to-label scope changes which diagnostics are computed and
+            # is therefore semantic. Worker counts/BLAS threads remain purely
+            # operational and are intentionally excluded.
+            "detailed_internal": config.get("pipeline", {}).get(
+                "detailed_internal", {}
+            ),
         }
     if stage == "portfolio":
         return {

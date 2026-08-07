@@ -3,6 +3,7 @@ from __future__ import annotations
 """Production hardening for the v2.8 staged pipeline."""
 
 import gc
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -10,6 +11,45 @@ from typing import Any, Mapping
 
 import pandas as pd
 import psutil
+
+
+def _stage_key(stage_name: str) -> str:
+    return stage_name.removeprefix("pipeline_")
+
+
+def _stage_intra_workers(config: Mapping[str, Any], stage: str) -> int:
+    pipeline = config.get("pipeline", {})
+    mapping = pipeline.get("stage_intra_workers", {})
+    if isinstance(mapping, Mapping) and stage in mapping:
+        return max(1, int(mapping[stage]))
+    atomic = config.get("atomic", {})
+    return max(1, int(atomic.get("intra_date_workers", 4)))
+
+
+def _stage_blas_threads(config: Mapping[str, Any], stage: str) -> int:
+    pipeline = config.get("pipeline", {})
+    mapping = pipeline.get("stage_blas_threads", {})
+    if isinstance(mapping, Mapping) and stage in mapping:
+        return max(1, int(mapping[stage]))
+    return _stage_intra_workers(config, stage)
+
+
+def _worker_env(config: Mapping[str, Any], stage: str) -> dict[str, str]:
+    env = os.environ.copy()
+    threads = _stage_blas_threads(config, stage)
+    for name in (
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        env[name] = str(threads)
+    env["OMP_DYNAMIC"] = "FALSE"
+    env["MKL_DYNAMIC"] = "FALSE"
+    env["NFF_PIPELINE_STAGE"] = stage
+    env["NFF_STAGE_BLAS_THREADS"] = str(threads)
+    return env
 
 
 def install(P: Any) -> None:
@@ -37,15 +77,22 @@ def install(P: Any) -> None:
             if P.C.CTX is not None:
                 return fn(config, trade_date)
             atomic = config.get("atomic", {})
+            stage = _stage_key(stage_name)
+            intra_workers = _stage_intra_workers(config, stage)
             P.C.CTX = P.C.Context(
                 trade_date=trade_date,
                 out_root=P._run_root(config),
                 contract_hash=P._contract_hash(config),
                 factor_block_size=int(atomic.get("factor_block_size", 8)),
-                intra_workers=int(atomic.get("intra_date_workers", 4)),
+                intra_workers=intra_workers,
             )
             P.C.CTX.root.mkdir(parents=True, exist_ok=True)
-            P.C._event(stage_name, "running")
+            P.C._event(
+                stage_name,
+                "running",
+                intra_workers=intra_workers,
+                blas_threads=_stage_blas_threads(config, stage),
+            )
             started = time.perf_counter()
             try:
                 result = fn(config, trade_date)
@@ -117,6 +164,8 @@ def install(P: Any) -> None:
         log_root.mkdir(parents=True, exist_ok=True)
         attempts: dict[str, int] = {}
         verified = 0
+        intra_workers = _stage_intra_workers(config, stage)
+        blas_threads = _stage_blas_threads(config, stage)
 
         while pending or running:
             available_gb = psutil.virtual_memory().available / 1024**3
@@ -140,6 +189,7 @@ def install(P: Any) -> None:
                     P._worker_command(config_path, stage, trade_date),
                     stdout=stdout,
                     stderr=stderr,
+                    env=_worker_env(config, stage),
                 )
                 running[trade_date] = {
                     "process": process,
@@ -214,6 +264,8 @@ def install(P: Any) -> None:
                     "memory_reserve_gb": reserve_gb,
                     "usable_memory_gb": round(usable_gb, 3),
                     "estimated_worker_gb": spec.estimated_worker_gb,
+                    "stage_intra_workers": intra_workers,
+                    "stage_blas_threads": blas_threads,
                     "updated_utc": pd.Timestamp.utcnow().isoformat(),
                 },
             )
