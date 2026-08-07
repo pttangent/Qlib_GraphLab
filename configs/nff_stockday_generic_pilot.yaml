@@ -1,0 +1,117 @@
+version: "nff_stockday_generic_pilot_v1"
+
+run:
+  workers: 4
+  seed: 20260804
+  torch_threads: 4
+
+dates:
+  start: "2026-01-02"
+  end: "2026-07-22"
+
+output:
+  episode_run_root: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_episode/runs/pilot_v1"
+  model_run_root: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_models/runs/generic_gru_pilot_v1"
+
+episode_factory:
+  warehouse_root: "D:/DEV/AnotherNetworkFactory/warehouses/NFF_warehouse"
+  canonical_sets:
+    bars_1m:
+      schema_version: "v1"
+      columns: [open, close, volume, dollar_volume, vwap]
+    trades_1m_core:
+      schema_version: "v1"
+      columns: [trade_count, signed_notional]
+  feature_sets:
+    minute_nvg:
+      schema_version: "v3"
+      columns:
+        - price_nvg_30m_top_bottom_asymmetry
+        - price_path_30m_efficiency
+        - price_volume_terminal_overlap_30m
+    trade_nvg:
+      schema_version: "v3"
+      columns:
+        - trade_flow_nvg_300s_top_bottom_asymmetry
+        - trade_flow_path_300s_efficiency
+        - trade_price_flow_terminal_overlap_300s
+    hawkes_lite:
+      schema_version: "v3"
+      columns:
+        - hawkes_ready
+        - hawkes_total_intensity
+        - hawkes_intensity_imbalance
+        - hawkes_endogenous_share
+        - hawkes_cross_excitation_share
+        - hawkes_branching_ratio_max
+        - hawkes_shock_score_60s
+        - hawkes_shock_score_180s
+        - hawkes_shock_score_300s
+  execution:
+    frequency: "1min"
+    delay_bars: 1
+    collision_policy: "latest"
+  policy:
+    timezone: "America/New_York"
+    support_start: "09:30"
+    support_end: "10:00"
+    query_start: "10:00"
+    query_end: "15:00"
+    session_end: "16:00"
+    query_stride_minutes: 15
+    query_lookback_minutes: 30
+    min_support_coverage: 0.60
+    min_query_coverage: 0.60
+    max_symbols_per_day: 500
+    universe_rank_column: "bars_1m__dollar_volume"
+  targets:
+    - name: "return_open_h15"
+      kind: "forward_return"
+      horizon_minutes: 15
+      price_column: "bars_1m__open"
+      entry_delay_minutes: 1
+    - name: "return_open_h30"
+      kind: "forward_return"
+      horizon_minutes: 30
+      price_column: "bars_1m__open"
+      entry_delay_minutes: 1
+    - name: "return_open_h60"
+      kind: "forward_return"
+      horizon_minutes: 60
+      price_column: "bars_1m__open"
+      entry_delay_minutes: 1
+    - name: "realized_vol_close_h30"
+      kind: "realized_volatility"
+      horizon_minutes: 30
+      price_column: "bars_1m__close"
+      entry_delay_minutes: 1
+      minimum_observations: 10
+    - name: "realized_vol_close_h60"
+      kind: "realized_volatility"
+      horizon_minutes: 60
+      price_column: "bars_1m__close"
+      entry_delay_minutes: 1
+      minimum_observations: 20
+  loader_kwargs:
+    strict_manifests: true
+    allow_mixed_contracts: false
+    output_float32: true
+    arrow_use_threads: true
+
+segments:
+  ratios: [0.70, 0.15, 0.15]
+
+model:
+  hidden_size: 128
+  num_layers: 2
+  dropout: 0.10
+  head_hidden_size: 64
+
+training:
+  device: "auto"
+  epochs: 10
+  batch_size: 256
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  amp: true
