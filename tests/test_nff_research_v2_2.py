@@ -86,6 +86,40 @@ def test_oof_ridge_heldout_label_perturbation_does_not_change_heldout_prediction
     assert not np.allclose(original[folds != 0], perturbed[folds != 0])
 
 
+def test_stage_parallel_cap_uses_conservative_active_stage_limit(tmp_path):
+    checkpoint = tmp_path / "atomic_checkpoints" / "date=2026-01-02"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "stage_events.jsonl").write_text(
+        json.dumps({"stage": "portfolio_proxy", "state": "running"}) + "\n",
+        encoding="utf-8",
+    )
+    cap, summary = runner.stage_parallel_cap(
+        tmp_path,
+        ["2026-01-02"],
+        6,
+        {"default": 3, "factor_block": 6, "portfolio_proxy": 2},
+    )
+    assert cap == 2
+    assert summary["counts"] == {"portfolio_proxy": 1}
+
+
+def test_stage_parallel_cap_allows_factor_stage_headroom(tmp_path):
+    checkpoint = tmp_path / "atomic_checkpoints" / "date=2026-01-02"
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "stage_events.jsonl").write_text(
+        json.dumps({"stage": "factor_block", "state": "running"}) + "\n",
+        encoding="utf-8",
+    )
+    cap, summary = runner.stage_parallel_cap(
+        tmp_path,
+        ["2026-01-02"],
+        6,
+        {"default": 3, "factor_block": 6},
+    )
+    assert cap == 6
+    assert summary["cap_by_stage"] == {"factor_block": 6}
+
+
 def test_ridge_fit_statistics_are_learned_from_training_rows_only():
     train_x = np.array([[1.0, 10.0], [3.0, 14.0], [5.0, 18.0]])
     train_y = np.array([-0.25, 0.0, 0.25])

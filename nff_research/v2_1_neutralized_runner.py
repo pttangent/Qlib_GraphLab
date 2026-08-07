@@ -135,6 +135,17 @@ TURNOVER_CONTROL_POLICY = {
     "max_replacement_fraction": 0.50,
 }
 ENABLED_PORTFOLIO_VARIANTS: list[str] | None = None
+PORTFOLIO_WORKERS = 8
+STAGE_PARALLEL_CAPS: dict[str, int] = {
+    "default": 3,
+    "factor_block": 6,
+    "feature_output": 6,
+    "merge_venue": 6,
+    "ic_and_neutralization": 3,
+    "decile_curves": 4,
+    "portfolio_proxy": 2,
+    "incremental_model_screen": 2,
+}
 
 RESEARCH_VERSION = "2.3"
 BASE_RUNNER_VERSION = "2.1"
@@ -233,9 +244,24 @@ def utc_now() -> str:
 
 def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(value, indent=2, default=str, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    # Status is written by the scheduler and the worker progress bridge.
+    # Unique staging files avoid Windows replace collisions between writers.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        tmp.write_text(
+            json.dumps(value, indent=2, default=str, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        for attempt in range(6):
+            try:
+                tmp.replace(path)
+                return
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.03 * (attempt + 1))
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def read_status(path: Path) -> dict[str, Any]:
@@ -293,7 +319,7 @@ def load_yaml_config(path: str | None) -> dict[str, Any]:
 
 
 def apply_config_globals(config: dict[str, Any]) -> None:
-    global WAREHOUSE_ROOT, RESEARCH_ROOT, RAW_1M_ROOT, NFF_SRC_ROOT, INDUSTRY_METADATA_PATH, CONTROLS_ROOT, TURNOVER_CONTROL_POLICY, ENABLED_PORTFOLIO_VARIANTS
+    global WAREHOUSE_ROOT, RESEARCH_ROOT, RAW_1M_ROOT, NFF_SRC_ROOT, INDUSTRY_METADATA_PATH, CONTROLS_ROOT, TURNOVER_CONTROL_POLICY, ENABLED_PORTFOLIO_VARIANTS, PORTFOLIO_WORKERS, STAGE_PARALLEL_CAPS
     paths = config.get("local_paths", {}) if isinstance(config.get("local_paths", {}), dict) else {}
     if paths.get("warehouse_root"):
         WAREHOUSE_ROOT = Path(paths["warehouse_root"])
@@ -307,6 +333,17 @@ def apply_config_globals(config: dict[str, Any]) -> None:
         INDUSTRY_METADATA_PATH = Path(paths["industry_metadata"])
     CONTROLS_ROOT = RESEARCH_ROOT / "derived_inputs" / "daily_bar_controls_v2_1"
     portfolio = config.get("portfolio_proxy", {}) if isinstance(config.get("portfolio_proxy", {}), dict) else {}
+    atomic = config.get("atomic", {}) if isinstance(config.get("atomic", {}), dict) else {}
+    PORTFOLIO_WORKERS = max(1, int(portfolio.get("workers", atomic.get("intra_date_workers", PORTFOLIO_WORKERS))))
+    configured_stage_caps = run_cfg.get("stage_parallel_caps", {}) if isinstance(run_cfg := config.get("run", {}), dict) else {}
+    if isinstance(configured_stage_caps, dict):
+        STAGE_PARALLEL_CAPS = {
+            **STAGE_PARALLEL_CAPS,
+            **{
+                str(stage): max(1, int(cap))
+                for stage, cap in configured_stage_caps.items()
+            },
+        }
     configured_turnover = portfolio.get("turnover_controlled_variant", {})
     if isinstance(configured_turnover, dict):
         TURNOVER_CONTROL_POLICY = {
@@ -1961,6 +1998,302 @@ def _rebalance_ordinal(dt: Any, rebalance_minutes: int) -> int | None:
     return (minute - open_minute) // rebalance_minutes
 
 
+def _portfolio_feature_rows(
+    work: pd.DataFrame,
+    feature: str,
+    variant: dict[str, Any],
+    trade_date: str,
+    universe: str,
+    family: str,
+    horizon: int,
+    min_n: int,
+    cost_bps_per_turnover: float,
+) -> list[dict[str, Any]]:
+    """Compute one independent label/variant/feature portfolio stream."""
+    variant_rebalance = int(variant["rebalance_minutes"])
+    sleeve_count = max(1, int(math.ceil(horizon / variant_rebalance)))
+    prev_by_sleeve: dict[int, pd.Series] = {}
+    previous_signal_by_sleeve: dict[int, pd.Series] = {}
+    previous_hold_periods_by_sleeve: dict[int, dict[str, int]] = {}
+    columns = list(dict.fromkeys([feature, "label", "__adv20"]))
+    gate_column = variant.get("gate_column")
+    if variant["gate_pair_id"] is not None and gate_column in work.columns:
+        columns = list(dict.fromkeys([*columns, str(gate_column)]))
+    rows: list[dict[str, Any]] = []
+    for dt, block in work[columns].dropna(subset=[feature, "label", "__adv20"]).groupby(
+        level="datetime", sort=True
+    ):
+        rebalance_ordinal = _rebalance_ordinal(dt, variant_rebalance)
+        if rebalance_ordinal is None or len(block) < min_n:
+            continue
+        sleeve_id = rebalance_ordinal % sleeve_count
+        block = block.assign(__signal=block[feature].astype(float) * float(variant["direction"]))
+        if variant["gate_pair_id"] is not None:
+            if gate_column not in block.columns:
+                continue
+            pre_gate, gated, gate_stats = _hawkes_gate_pair(
+                block,
+                str(gate_column),
+                "__adv20",
+                exclude_fraction=float(variant.get("exclude_fraction", 0.20)),
+            )
+            if variant["gate_mode"] == "exclude_top20":
+                block = gated
+            else:
+                block = pre_gate
+                gate_stats = {
+                    **gate_stats,
+                    "eligible_count": int(len(pre_gate)),
+                    "gate_kept_ratio": 1.0,
+                    "eligible_adv20_sum": gate_stats["pre_gate_adv20_sum"],
+                    "eligible_adv20_kept_ratio": 1.0,
+                }
+        else:
+            adv_sum = float(pd.to_numeric(block["__adv20"], errors="coerce").sum())
+            gate_stats = {
+                "pre_gate_count": int(len(block)),
+                "eligible_count": int(len(block)),
+                "gate_kept_ratio": 1.0,
+                "pre_gate_adv20_sum": adv_sum,
+                "eligible_adv20_sum": adv_sum,
+                "eligible_adv20_kept_ratio": 1.0,
+            }
+        if len(block) < min_n:
+            continue
+        turnover_state: dict[str, Any] = {
+            "replacement_count": 0,
+            "replacement_budget": 0,
+            "minimum_hold_retained_count": 0,
+        }
+        if variant.get("turnover_controlled", False):
+            weights, turnover_state = _turnover_controlled_weights(
+                block,
+                "__signal",
+                prev_by_sleeve.get(sleeve_id),
+                previous_signal_by_sleeve.get(sleeve_id),
+                previous_hold_periods_by_sleeve.get(sleeve_id),
+                quantile=float(variant["quantile"]),
+                buffer_quantile=float(TURNOVER_CONTROL_POLICY["buffer_quantile"]),
+                min_hold_periods=int(TURNOVER_CONTROL_POLICY["min_hold_periods"]),
+                signal_change_threshold=float(TURNOVER_CONTROL_POLICY["signal_change_threshold"]),
+                max_replacement_fraction=float(TURNOVER_CONTROL_POLICY["max_replacement_fraction"]),
+            )
+        else:
+            weights = _portfolio_weights(block, "__signal", quantile=float(variant["quantile"]))
+        if weights.empty:
+            continue
+        long_mask = weights > 0
+        short_mask = weights < 0
+        gross_return = float((weights * block.loc[weights.index, "label"]).sum())
+        prev_weights = prev_by_sleeve.get(sleeve_id)
+        turnover = _same_sleeve_turnover(weights, prev_weights)
+        cost = turnover * cost_bps_per_turnover / 10000.0
+        selected_adv20_sum = float(
+            pd.to_numeric(block.loc[weights.index, "__adv20"], errors="coerce").sum()
+        )
+        rows.append(
+            {
+                "trade_date": trade_date,
+                "datetime": dt,
+                "universe": universe,
+                "feature": feature,
+                "bundle": infer_bundle(feature),
+                "label_family": family,
+                "horizon_bars": horizon,
+                "portfolio_variant": variant["name"],
+                "signal_direction": "long_high" if variant["direction"] > 0 else "contrarian",
+                "quantile": float(variant["quantile"]),
+                "hawkes_liquidity_gate": variant["gate_mode"] == "exclude_top20",
+                "gate_pair_id": variant["gate_pair_id"],
+                "gate_mode": variant["gate_mode"],
+                "execution_role": "primary" if family == "return_vwap_to_vwap" else "diagnostic",
+                "variant_applicability": _portfolio_variant_applicability(horizon, variant_rebalance),
+                "rebalance_minutes": variant_rebalance,
+                "sleeve_count": sleeve_count,
+                "sleeve_id": sleeve_id,
+                "portfolio_accounting": "same_sleeve_turnover",
+                "turnover_policy": "hysteresis_min_hold_signal_threshold_replacement_budget" if variant.get("turnover_controlled", False) else "full_tail_rebuild",
+                "replacement_count": turnover_state["replacement_count"],
+                "replacement_budget": turnover_state["replacement_budget"],
+                "minimum_hold_retained_count": turnover_state["minimum_hold_retained_count"],
+                "long_count": int(long_mask.sum()),
+                "short_count": int(short_mask.sum()),
+                "selected_count": int(len(weights)),
+                **gate_stats,
+                "selected_adv20_sum": selected_adv20_sum,
+                "gross_return": gross_return,
+                "turnover": turnover,
+                "cost_bps_per_turnover": cost_bps_per_turnover,
+                "cost": cost,
+                "net_return": gross_return - cost,
+            }
+        )
+        prev_by_sleeve[sleeve_id] = weights
+        if variant.get("turnover_controlled", False):
+            previous_signal_by_sleeve[sleeve_id] = turnover_state["signal_percentiles"]
+            previous_hold_periods_by_sleeve[sleeve_id] = turnover_state["hold_periods"]
+    return rows
+
+
+def _portfolio_variant_rows_batched(
+    work: pd.DataFrame,
+    portfolio_features: list[str],
+    variant: dict[str, Any],
+    trade_date: str,
+    universe: str,
+    family: str,
+    horizon: int,
+    min_n: int,
+    cost_bps_per_turnover: float,
+) -> list[dict[str, Any]]:
+    """Compute one variant for all features while grouping the minute table once.
+
+    The per-feature state remains independent, but the expensive datetime
+    grouping and gate ranking are shared across the feature matrix.
+    """
+    variant_rebalance = int(variant["rebalance_minutes"])
+    sleeve_count = max(1, int(math.ceil(horizon / variant_rebalance)))
+    prev_by_feature: dict[str, dict[int, pd.Series]] = {
+        feature: {} for feature in portfolio_features
+    }
+    previous_signal_by_feature: dict[str, dict[int, pd.Series]] = {
+        feature: {} for feature in portfolio_features
+    }
+    previous_hold_periods_by_feature: dict[str, dict[int, dict[str, int]]] = {
+        feature: {} for feature in portfolio_features
+    }
+    gate_column = variant.get("gate_column")
+    columns = list(dict.fromkeys([*portfolio_features, "label", "__adv20"]))
+    if variant["gate_pair_id"] is not None and gate_column in work.columns:
+        columns = list(dict.fromkeys([*columns, str(gate_column)]))
+    rows: list[dict[str, Any]] = []
+    grouped = work[columns].groupby(level="datetime", sort=True)
+    for dt, raw_block in grouped:
+        rebalance_ordinal = _rebalance_ordinal(dt, variant_rebalance)
+        if rebalance_ordinal is None:
+            continue
+        base_block = raw_block.dropna(subset=["label", "__adv20"])
+        if len(base_block) < min_n:
+            continue
+        if variant["gate_pair_id"] is not None:
+            if gate_column not in base_block.columns:
+                continue
+            pre_gate, gated, shared_gate_stats = _hawkes_gate_pair(
+                base_block,
+                str(gate_column),
+                "__adv20",
+                exclude_fraction=float(variant.get("exclude_fraction", 0.20)),
+            )
+            if variant["gate_mode"] == "exclude_top20":
+                block = gated
+                gate_stats = shared_gate_stats
+            else:
+                block = pre_gate
+                gate_stats = {
+                    **shared_gate_stats,
+                    "eligible_count": int(len(pre_gate)),
+                    "gate_kept_ratio": 1.0,
+                    "eligible_adv20_sum": shared_gate_stats["pre_gate_adv20_sum"],
+                    "eligible_adv20_kept_ratio": 1.0,
+                }
+        else:
+            block = base_block
+            adv_sum = float(pd.to_numeric(block["__adv20"], errors="coerce").sum())
+            gate_stats = {
+                "pre_gate_count": int(len(block)),
+                "eligible_count": int(len(block)),
+                "gate_kept_ratio": 1.0,
+                "pre_gate_adv20_sum": adv_sum,
+                "eligible_adv20_sum": adv_sum,
+                "eligible_adv20_kept_ratio": 1.0,
+            }
+        if len(block) < min_n:
+            continue
+        sleeve_id = rebalance_ordinal % sleeve_count
+        for feature in portfolio_features:
+            feature_block = block.dropna(subset=[feature])
+            if len(feature_block) < min_n:
+                continue
+            feature_block = feature_block.assign(
+                __signal=feature_block[feature].astype(float) * float(variant["direction"])
+            )
+            previous = prev_by_feature[feature].get(sleeve_id)
+            previous_signals = previous_signal_by_feature[feature].get(sleeve_id)
+            previous_holds = previous_hold_periods_by_feature[feature].get(sleeve_id)
+            turnover_state: dict[str, Any] = {
+                "replacement_count": 0,
+                "replacement_budget": 0,
+                "minimum_hold_retained_count": 0,
+            }
+            if variant.get("turnover_controlled", False):
+                weights, turnover_state = _turnover_controlled_weights(
+                    feature_block,
+                    "__signal",
+                    previous,
+                    previous_signals,
+                    previous_holds,
+                    quantile=float(variant["quantile"]),
+                    buffer_quantile=float(TURNOVER_CONTROL_POLICY["buffer_quantile"]),
+                    min_hold_periods=int(TURNOVER_CONTROL_POLICY["min_hold_periods"]),
+                    signal_change_threshold=float(TURNOVER_CONTROL_POLICY["signal_change_threshold"]),
+                    max_replacement_fraction=float(TURNOVER_CONTROL_POLICY["max_replacement_fraction"]),
+                )
+            else:
+                weights = _portfolio_weights(feature_block, "__signal", quantile=float(variant["quantile"]))
+            if weights.empty:
+                continue
+            long_mask = weights > 0
+            short_mask = weights < 0
+            gross_return = float((weights * feature_block.loc[weights.index, "label"]).sum())
+            turnover = _same_sleeve_turnover(weights, previous)
+            cost = turnover * cost_bps_per_turnover / 10000.0
+            selected_adv20_sum = float(
+                pd.to_numeric(feature_block.loc[weights.index, "__adv20"], errors="coerce").sum()
+            )
+            rows.append(
+                {
+                    "trade_date": trade_date,
+                    "datetime": dt,
+                    "universe": universe,
+                    "feature": feature,
+                    "bundle": infer_bundle(feature),
+                    "label_family": family,
+                    "horizon_bars": horizon,
+                    "portfolio_variant": variant["name"],
+                    "signal_direction": "long_high" if variant["direction"] > 0 else "contrarian",
+                    "quantile": float(variant["quantile"]),
+                    "hawkes_liquidity_gate": variant["gate_mode"] == "exclude_top20",
+                    "gate_pair_id": variant["gate_pair_id"],
+                    "gate_mode": variant["gate_mode"],
+                    "execution_role": "primary" if family == "return_vwap_to_vwap" else "diagnostic",
+                    "variant_applicability": _portfolio_variant_applicability(horizon, variant_rebalance),
+                    "rebalance_minutes": variant_rebalance,
+                    "sleeve_count": sleeve_count,
+                    "sleeve_id": sleeve_id,
+                    "portfolio_accounting": "same_sleeve_turnover",
+                    "turnover_policy": "hysteresis_min_hold_signal_threshold_replacement_budget" if variant.get("turnover_controlled", False) else "full_tail_rebuild",
+                    "replacement_count": turnover_state["replacement_count"],
+                    "replacement_budget": turnover_state["replacement_budget"],
+                    "minimum_hold_retained_count": turnover_state["minimum_hold_retained_count"],
+                    "long_count": int(long_mask.sum()),
+                    "short_count": int(short_mask.sum()),
+                    "selected_count": int(len(weights)),
+                    **gate_stats,
+                    "selected_adv20_sum": selected_adv20_sum,
+                    "gross_return": gross_return,
+                    "turnover": turnover,
+                    "cost_bps_per_turnover": cost_bps_per_turnover,
+                    "cost": cost,
+                    "net_return": gross_return - cost,
+                }
+            )
+            prev_by_feature[feature][sleeve_id] = weights
+            if variant.get("turnover_controlled", False):
+                previous_signal_by_feature[feature][sleeve_id] = turnover_state["signal_percentiles"]
+                previous_hold_periods_by_feature[feature][sleeve_id] = turnover_state["hold_periods"]
+    return rows
+
+
 def staggered_portfolio_proxy(
     features: pd.DataFrame,
     labels: pd.DataFrame,
@@ -2044,6 +2377,31 @@ def staggered_portfolio_proxy(
             ],
             axis=1,
         )
+        # Each (variant, feature) stream owns its same-sleeve state and is
+        # independent of every other stream. Keep the legacy serial block
+        # below as a reference path, but use bounded parallel execution for
+        # production runs.
+        tasks = list(variants)
+        workers = min(max(1, PORTFOLIO_WORKERS), max(1, len(tasks)))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="portfolio-stream") as executor:
+            futures = [
+                executor.submit(
+                    _portfolio_variant_rows_batched,
+                    work,
+                    portfolio_features,
+                    variant,
+                    trade_date,
+                    universe,
+                    family,
+                    horizon,
+                    min_n,
+                    cost_bps_per_turnover,
+                )
+                    for variant in tasks
+                ]
+            for future in futures:
+                rows.extend(future.result())
+        continue
         for variant in variants:
             variant_rebalance = int(variant["rebalance_minutes"])
             sleeve_count = max(1, int(math.ceil(horizon / variant_rebalance)))
@@ -2905,6 +3263,8 @@ def adaptive_parallel_target(
     safe_streak: int,
 ) -> tuple[int, str]:
     """Change one worker at a time after sustained headroom; shed capacity quickly."""
+    if current_parallel > max_parallel:
+        return max(min_parallel, max_parallel), "stage_parallel_cap"
     if (
         float(resources["memory_percent"]) >= memory_high_water
         or float(resources["memory_available_gb"]) <= memory_min_available_gb
@@ -2953,6 +3313,105 @@ def resource_snapshot(out_root: Path) -> dict[str, Any]:
         "worker_rss_total_gb": round(sum(worker_rss) / 1024**3, 3),
         "worker_rss_max_gb": round(max(worker_rss, default=0) / 1024**3, 3),
     }
+
+
+def active_worker_stage_summary(out_root: Path, trade_dates: list[str]) -> dict[str, Any]:
+    """Read the latest stage event for each active date without touching workers.
+
+    The date scheduler only knows process-level state. Atomic workers expose
+    stage events in their own checkpoint directories, which lets the parent
+    use a conservative cap for memory-heavy stages such as portfolio_proxy.
+    """
+    stages: dict[str, str] = {}
+    for trade_date in trade_dates:
+        events_path = out_root / "atomic_checkpoints" / f"date={trade_date}" / "stage_events.jsonl"
+        if not events_path.exists():
+            stages[trade_date] = "unknown"
+            continue
+        last: dict[str, Any] | None = None
+        try:
+            with events_path.open("rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                position = handle.tell()
+                buffer = b""
+                while position > 0 and not buffer:
+                    step = min(8192, position)
+                    position -= step
+                    handle.seek(position)
+                    buffer = handle.read(step) + buffer
+                    lines = buffer.splitlines()
+                    if position == 0 or len(lines) > 1:
+                        for raw in reversed(lines):
+                            if raw.strip():
+                                last = json.loads(raw.decode("utf-8"))
+                                break
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            last = None
+        stages[trade_date] = str(last.get("stage", "unknown")) if last else "unknown"
+    counts: dict[str, int] = {}
+    for stage in stages.values():
+        counts[stage] = counts.get(stage, 0) + 1
+    return {"dates": stages, "counts": counts}
+
+
+def stage_parallel_cap(
+    out_root: Path,
+    trade_dates: list[str],
+    max_parallel: int,
+    stage_caps: dict[str, int] | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """Return a conservative cap for the stages currently occupying workers."""
+    caps = stage_caps or STAGE_PARALLEL_CAPS
+    summary = active_worker_stage_summary(out_root, trade_dates)
+    active = [stage for stage in summary["dates"].values() if stage != "unknown"]
+    if not active:
+        return min(max_parallel, int(caps.get("default", max_parallel))), summary
+    cap = min(int(caps.get(stage, caps.get("default", max_parallel))) for stage in active)
+    summary["cap_by_stage"] = {stage: int(caps.get(stage, caps.get("default", max_parallel))) for stage in sorted(set(active))}
+    summary["effective_cap"] = min(max_parallel, cap)
+    return min(max_parallel, cap), summary
+
+
+def drain_excess_workers(
+    running: dict[str, dict[str, Any]],
+    target_parallel: int,
+    reason: str,
+) -> list[dict[str, Any]]:
+    """Terminate only excess workers after a hard cap reduction.
+
+    Workers are independently checkpointed and retried by the parent. Draining
+    the largest RSS processes first protects the host from a transient OOM
+    while preserving the run contract and already-written factor blocks.
+    """
+    excess = max(0, len(running) - int(target_parallel))
+    if excess == 0:
+        return []
+    candidates: list[tuple[float, str, dict[str, Any]]] = []
+    for trade_date, info in running.items():
+        process = info.get("process")
+        rss_gb = 0.0
+        try:
+            if process is not None and process.poll() is None:
+                rss_gb = psutil.Process(process.pid).memory_info().rss / 1024**3
+        except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError):
+            pass
+        candidates.append((rss_gb, trade_date, info))
+    actions: list[dict[str, Any]] = []
+    for rss_gb, trade_date, info in sorted(candidates, reverse=True)[:excess]:
+        process = info.get("process")
+        if process is None or process.poll() is not None:
+            continue
+        process.terminate()
+        actions.append(
+            {
+                "trade_date": trade_date,
+                "pid": int(process.pid),
+                "rss_gb": round(rss_gb, 3),
+                "reason": reason,
+                "action": "terminate_and_requeue",
+            }
+        )
+    return actions
 
 
 def worker_command(args: argparse.Namespace, out_root: Path, controls_path: Path, trade_date: str) -> list[str]:
@@ -3030,6 +3489,11 @@ def main() -> int:
     parser.add_argument("--launch-batch-size", type=int, default=4)
     parser.add_argument("--min-cs-n", type=int, default=30)
     parser.add_argument("--contract-hash")
+    parser.add_argument(
+        "--resume-existing-contract",
+        action="store_true",
+        help="Resume an existing run contract while changing runtime-only scheduler flags.",
+    )
     parser.add_argument("--allow-mixed-contracts", action="store_true")
     parser.add_argument("--rebalance-minutes", type=int, default=15)
     parser.add_argument("--cost-bps-per-turnover", type=float, default=1.0)
@@ -3057,7 +3521,32 @@ def main() -> int:
         return 0
 
     effective_config["paths"]["controls_path"] = str(controls_path)
-    if args.worker and args.contract_hash:
+    if args.resume_existing_contract:
+        existing_hash = read_run_contract_hash(out_root)
+        if not existing_hash:
+            raise RuntimeError(f"--resume-existing-contract requires an existing run contract: {out_root}")
+        if args.contract_hash and existing_hash != args.contract_hash:
+            raise RuntimeError(
+                f"resume contract {args.contract_hash} does not match existing run contract {existing_hash}"
+            )
+        contract_hash = existing_hash
+        args.contract_hash = existing_hash
+        atomic_write_json(
+            out_root / "runtime_resume.json",
+            {
+                "resumed_utc": utc_now(),
+                "existing_contract_hash": existing_hash,
+                "current_git_commit": current_git_commit(),
+                "runtime_only_overrides": {
+                    "parallel": args.parallel,
+                    "max_parallel": args.max_parallel,
+                    "min_parallel": args.min_parallel,
+                    "memory_min_available_gb": args.memory_min_available_gb,
+                },
+                "note": "Research contract is unchanged; scheduler-only overrides are recorded separately.",
+            },
+        )
+    elif args.worker and args.contract_hash:
         existing_hash = read_run_contract_hash(out_root)
         if existing_hash and existing_hash != args.contract_hash:
             raise RuntimeError(f"worker contract hash {args.contract_hash} does not match existing run contract {existing_hash}")
@@ -3145,6 +3634,11 @@ def main() -> int:
                 update_status(status_path, status="blocked_disk_free_floor", stage="paused", last_failure=failure, resources=resources)
                 return 3
             else:
+                stage_cap, stage_summary = stage_parallel_cap(
+                    out_root,
+                    list(running),
+                    args.max_parallel,
+                )
                 safe_sample = (
                     resources["memory_percent"] < args.memory_high_water - 15
                     and resources["memory_available_gb"] > args.memory_min_available_gb
@@ -3157,7 +3651,7 @@ def main() -> int:
                     resources,
                     current_parallel=current_parallel,
                     min_parallel=args.min_parallel,
-                    max_parallel=args.max_parallel,
+                    max_parallel=stage_cap,
                     target_cpu=args.target_cpu,
                     memory_high_water=args.memory_high_water,
                     memory_min_available_gb=args.memory_min_available_gb,
@@ -3172,9 +3666,29 @@ def main() -> int:
                         "reason": tune_reason,
                         "safe_streak": safe_streak,
                         "running_workers": len(running),
+                        "stage_parallel_cap": stage_cap,
+                        "active_worker_stages": stage_summary,
                         "resources": resources,
                     },
                 )
+                drain_actions = drain_excess_workers(
+                    running,
+                    current_parallel,
+                    tune_reason,
+                )
+                if drain_actions:
+                    append_jsonl(
+                        tuning_log_path,
+                        {
+                            "sample_utc": utc_now(),
+                            "previous_parallel": previous_parallel,
+                            "target_parallel": current_parallel,
+                            "reason": "active_worker_drain",
+                            "drain_actions": drain_actions,
+                            "active_worker_stages": stage_summary,
+                            "resources": resources,
+                        },
+                    )
 
         launched_this_cycle = 0
         while pending and len(running) < current_parallel and launched_this_cycle < max(1, args.launch_batch_size):

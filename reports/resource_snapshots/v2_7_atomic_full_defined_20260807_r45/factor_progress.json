@@ -1,0 +1,56 @@
+[
+  {
+    "trade_date": "2026-02-03",
+    "factor_completed": 0,
+    "factor_expected": 464,
+    "factor_progress_pct": 0.0,
+    "factor_manifest_count": 0,
+    "last_stage": "date",
+    "last_state": "running"
+  },
+  {
+    "trade_date": "2026-02-04",
+    "factor_completed": 464,
+    "factor_expected": 464,
+    "factor_progress_pct": 100.0,
+    "factor_manifest_count": 32,
+    "last_stage": "ic_and_neutralization",
+    "last_state": "running"
+  },
+  {
+    "trade_date": "2026-03-03",
+    "factor_completed": 464,
+    "factor_expected": 464,
+    "factor_progress_pct": 100.0,
+    "factor_manifest_count": 32,
+    "last_stage": "ic_and_neutralization",
+    "last_state": "running"
+  },
+  {
+    "trade_date": "2026-03-09",
+    "factor_completed": 464,
+    "factor_expected": 464,
+    "factor_progress_pct": 100.0,
+    "factor_manifest_count": 32,
+    "last_stage": "ic_and_neutralization",
+    "last_state": "running"
+  },
+  {
+    "trade_date": "2026-06-01",
+    "factor_completed": 464,
+    "factor_expected": 464,
+    "factor_progress_pct": 100.0,
+    "factor_manifest_count": 32,
+    "last_stage": "ic_and_neutralization",
+    "last_state": "running"
+  },
+  {
+    "trade_date": "2026-06-09",
+    "factor_completed": 464,
+    "factor_expected": 464,
+    "factor_progress_pct": 100.0,
+    "factor_manifest_count": 32,
+    "last_stage": "ic_and_neutralization",
+    "last_state": "running"
+  }
+]

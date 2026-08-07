@@ -1,0 +1,11 @@
+{
+  "factor_completed": 0,
+  "factor_expected": 464,
+  "factor_progress_pct": 0.0,
+  "factor_completed_blocks": 0,
+  "factor_checkpoint_level": "family/window/factor-block",
+  "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-02-03\\factors",
+  "factor_last_event_utc": "2026-08-07T02:54:22.921585+00:00",
+  "factor_current_stage": "date",
+  "factor_current_state": "running"
+}

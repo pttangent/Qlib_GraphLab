@@ -8,10 +8,17 @@ on:
       - "tests/test_nff_research_v2_2.py"
       - "tests/test_nff_research_v2_4_fastpath.py"
       - "tests/test_nff_research_v2_4_entry.py"
+      - "tests/test_nff_v2_7_schema_contract.py"
+      - "tests/test_nff_v2_7_models.py"
+      - "tests/test_nff_v2_7_factor_semantics.py"
+      - "tests/test_nff_v2_7_supplement_scope.py"
+      - "tests/test_nff_v2_7_symbol_id_join.py"
+      - "tests/test_nff_v2_7_prototype_contract.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
       - "configs/v2_1_neutralized_full.yaml"
       - "configs/v2_4_optimized_full.yaml"
+      - "configs/v2_7_atomic_full_campaign.yaml"
       - "nff_research/**"
       - "docs/component/nff_adapter.md"
       - ".github/workflows/nff-adapter.yml"
@@ -19,6 +26,7 @@ on:
     branches:
       - "agent/nff-direct-qlib-adapter"
       - "agent/nff-research-fastpath-v2-4"
+      - "agent/nff-research-atomic-fastpath-v2-7"
       - "codex/**"
     paths:
       - "qlib/contrib/data/nff.py"
@@ -26,10 +34,17 @@ on:
       - "tests/test_nff_research_v2_2.py"
       - "tests/test_nff_research_v2_4_fastpath.py"
       - "tests/test_nff_research_v2_4_entry.py"
+      - "tests/test_nff_v2_7_schema_contract.py"
+      - "tests/test_nff_v2_7_models.py"
+      - "tests/test_nff_v2_7_factor_semantics.py"
+      - "tests/test_nff_v2_7_supplement_scope.py"
+      - "tests/test_nff_v2_7_symbol_id_join.py"
+      - "tests/test_nff_v2_7_prototype_contract.py"
       - "examples/nff_qlib_pipeline.py"
       - "examples/configs/nff_qlib_example.json"
       - "configs/v2_1_neutralized_full.yaml"
       - "configs/v2_4_optimized_full.yaml"
+      - "configs/v2_7_atomic_full_campaign.yaml"
       - "nff_research/**"
       - ".github/workflows/nff-adapter.yml"
 
@@ -59,6 +74,12 @@ jobs:
           tests/test_nff_research_v2_2.py
           tests/test_nff_research_v2_4_fastpath.py
           tests/test_nff_research_v2_4_entry.py
+          tests/test_nff_v2_7_schema_contract.py
+          tests/test_nff_v2_7_models.py
+          tests/test_nff_v2_7_factor_semantics.py
+          tests/test_nff_v2_7_supplement_scope.py
+          tests/test_nff_v2_7_symbol_id_join.py
+          tests/test_nff_v2_7_prototype_contract.py
           --tb=short
       - name: Compile executable research entrypoints
         run: >-
@@ -69,7 +90,31 @@ jobs:
           tests/test_nff_research_v2_2.py
           tests/test_nff_research_v2_4_fastpath.py
           tests/test_nff_research_v2_4_entry.py
+          tests/test_nff_v2_7_schema_contract.py
+          tests/test_nff_v2_7_models.py
+          tests/test_nff_v2_7_factor_semantics.py
+          tests/test_nff_v2_7_supplement_scope.py
+          tests/test_nff_v2_7_symbol_id_join.py
+          tests/test_nff_v2_7_prototype_contract.py
           nff_research/v2_multilabel_runner.py
           nff_research/v2_1_neutralized_runner.py
           nff_research/v2_4_optimized_runner.py
           nff_research/v2_4_optimized_entry.py
+          nff_research/nff_schema_contract.py
+          nff_research/v2_7_prototype_contract.py
+          nff_research/v2_7_atomic_campaign.py
+          nff_research/v2_7_atomic_entry.py
+          nff_research/v2_7_deciles.py
+          nff_research/v2_7_formula_hardening.py
+          nff_research/v2_7_formula_semantic_patch.py
+          nff_research/v2_7_checkpoint_hardening.py
+          nff_research/v2_7_physical_contract.py
+          nff_research/v2_7_supplement_scope.py
+          nff_research/v2_7_symbol_id_supplement.py
+          nff_research/v2_7_models.py
+          nff_research/v2_7_ablation.py
+          nff_research/v2_7_runtime_hardening.py
+          nff_research/v2_7_run.py
+          nff_research/v2_7_launch.py
+      - name: Import canonical v2.7 launcher
+        run: python -c "import nff_research.v2_7_launch as launch; assert callable(launch.main)"

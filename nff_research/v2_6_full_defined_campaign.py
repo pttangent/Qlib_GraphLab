@@ -67,6 +67,7 @@ SUPPLEMENT_SPECS = pd.DataFrame(
 )
 SPEC_REGISTRY = pd.concat([SPEC_REGISTRY, SUPPLEMENT_SPECS], ignore_index=True)
 RUNTIME_FACTOR_STATUS: dict[str, dict[str, Any]] = {}
+LAST_LABEL_AUDIT: dict[str, Any] = {}
 
 
 def _source_columns_optional(kind: str, dataset: str, schema: str) -> list[str]:
@@ -134,7 +135,14 @@ def _full_add_all_features(frame: pd.DataFrame) -> pd.DataFrame:
     RUNTIME_FACTOR_STATUS.clear()
     RUNTIME_FACTOR_STATUS.update(runtime)
     keep = list(features.columns)
-    return features[keep].select_dtypes(include=[np.number]).replace([np.inf, -np.inf], np.nan).astype("float32")
+    # Normalize at the feature-builder boundary so every downstream stage
+    # (exact labels, controls, neutralization, deciles, and portfolio) sees
+    # the same canonical index.  Doing this only inside label construction
+    # leaves the caller's feature frame with unnamed/reversed levels.
+    result = features[keep].select_dtypes(include=[np.number]).replace(
+        [np.inf, -np.inf], np.nan
+    ).astype("float32")
+    return _ensure_research_index(result)
 
 
 def _full_analysis_features(features: pd.DataFrame) -> list[str]:
@@ -147,14 +155,193 @@ def _future_exact(frame: pd.DataFrame, column: str, offset_minutes: int) -> pd.S
     times = pd.to_datetime(index.get_level_values("datetime"), utc=True)
     symbols = index.get_level_values("instrument")
     lookup_index = pd.MultiIndex.from_arrays(
-        [times + pd.Timedelta(minutes=offset_minutes), symbols],
+        [symbols, times + pd.Timedelta(minutes=offset_minutes)],
         names=index.names,
     )
     source = pd.to_numeric(frame[column], errors="coerce").copy()
-    source.index = pd.MultiIndex.from_arrays([times, symbols], names=index.names)
+    source.index = pd.MultiIndex.from_arrays([symbols, times], names=index.names)
     result = source.reindex(lookup_index)
     result.index = index
     return result
+
+
+def _ensure_research_index(frame: pd.DataFrame) -> pd.DataFrame:
+    """Normalize loader index aliases before label code uses named levels."""
+    index = frame.index
+    if not isinstance(index, pd.MultiIndex):
+        raise TypeError(f"research frame must have a MultiIndex, got {type(index).__name__}")
+    names = list(index.names)
+
+    def datetime_score(position: int) -> float:
+        # Score unique level values rather than a row sample.  A symbol-major
+        # frame can otherwise make a mixed or swapped level look datetime-like
+        # for the sampled rows while leaving symbol values in the named level.
+        values = index.levels[position] if isinstance(index, pd.MultiIndex) else index.get_level_values(position)
+        if pd.api.types.is_datetime64_any_dtype(values):
+            return 1.0
+        # Inspect the full level by evenly spaced samples.  A leading slice
+        # can look datetime-like while a later symbol block contains values
+        # such as ``A``; that silently mislabels the levels and breaks labels.
+        sample_size = min(len(values), 4096)
+        if len(values) > sample_size:
+            positions = np.linspace(0, len(values) - 1, sample_size, dtype="int64")
+            sampled = values.take(positions)
+        else:
+            sampled = values
+        sample = pd.Series(sampled, dtype="object")
+        try:
+            parsed = pd.to_datetime(sample, utc=True, errors="coerce", format="mixed")
+        except (TypeError, ValueError):
+            parsed = pd.to_datetime(sample, utc=True, errors="coerce")
+        if not len(parsed):
+            return 0.0
+        plausible = parsed.notna() & parsed.ge(pd.Timestamp("2015-01-01", tz="UTC")) & parsed.lt(
+            pd.Timestamp("2035-01-01", tz="UTC")
+        )
+        return float(plausible.mean())
+
+    def datetime_position() -> int:
+        dtype_candidates = [
+            position
+            for position in range(index.nlevels)
+            if pd.api.types.is_datetime64_any_dtype(index.get_level_values(position))
+        ]
+        if len(dtype_candidates) == 1:
+            return dtype_candidates[0]
+        named_candidates = {
+            position
+            for position, name in enumerate(names)
+            if name in {"datetime", "timestamp", "event_time", "decision_time"}
+        }
+        positions = sorted(named_candidates) + [position for position in range(index.nlevels) if position not in named_candidates]
+        best_position = max(positions, key=datetime_score)
+        best_rate = datetime_score(best_position)
+        if best_rate < 0.9:
+            if names == [None, None] and index.nlevels == 2:
+                sample_size = min(len(index), 4096)
+                sample_positions = (
+                    np.linspace(0, len(index) - 1, sample_size, dtype="int64")
+                    if len(index) > sample_size
+                    else np.arange(sample_size, dtype="int64")
+                )
+                token_rates = []
+                for position in range(index.nlevels):
+                    tokens = pd.Series(
+                        index.get_level_values(position).take(sample_positions),
+                        dtype="string",
+                    ).str.strip()
+                    token_rates.append(float(tokens.str.match(r"^(19|20)\d{2}[-/]\d{1,2}").mean()))
+                if max(token_rates) >= 0.5:
+                    return int(np.argmax(token_rates))
+                # The NFF loader's unnamed fallback contract is still
+                # instrument, datetime.  Prefer an actual datetime dtype;
+                # otherwise retain that fixed two-level order rather than
+                # failing after a concat has stripped only the names.
+                for position in range(index.nlevels):
+                    if pd.api.types.is_datetime64_any_dtype(index.get_level_values(position)):
+                        return position
+                return 1
+            if named_candidates:
+                # The named level is only a provisional entry point.  The
+                # row-wise content repair below will validate or rebuild it.
+                return min(named_candidates)
+            raise KeyError(f"cannot identify datetime level from index names={names!r}")
+        return best_position
+
+    dt_position = datetime_position()
+    instrument_position = next(
+        (
+            position
+            for position, name in enumerate(names)
+            if position != dt_position and name in {"instrument", "symbol", "security", "ticker"}
+        ),
+        next(position for position in range(index.nlevels) if position != dt_position),
+    )
+    # The loader contract is canonical `(instrument, datetime)`.  Renaming
+    # levels without reordering them is unsafe: a concat can leave symbol
+    # values in a level still named `datetime`, which fails later during
+    # exact-time label joins.  Reorder from content-detected positions first,
+    # then apply the canonical names.
+    desired_positions = [instrument_position, dt_position]
+    canonical_names = ["instrument", "datetime"]
+    already_canonical = (
+        desired_positions == list(range(index.nlevels))
+        and list(index.names) == canonical_names
+    )
+    normalized = frame if already_canonical else frame.copy(deep=False)
+    normalized_index = index if already_canonical else index.reorder_levels(desired_positions)
+    normalized.index = normalized_index.set_names(canonical_names)
+
+    def deduplicate(result: pd.DataFrame) -> pd.DataFrame:
+        duplicate_mask = result.index.duplicated(keep="last")
+        if not bool(duplicate_mask.any()):
+            return result
+        compact = result.loc[~duplicate_mask].copy(deep=False)
+        compact.attrs["research_index_collision_count"] = int(duplicate_mask.sum())
+        return compact
+
+    parsed_datetime = pd.to_datetime(
+        normalized.index.get_level_values("datetime"), utc=True, errors="coerce"
+    )
+    parse_rate = float(parsed_datetime.notna().mean()) if len(parsed_datetime) else 0.0
+    if parse_rate < 0.9 and normalized.index.nlevels == 2:
+        # Some pandas concat paths preserve canonical names but reverse the
+        # actual level values.  Try the only valid alternate orientation
+        # before failing, and keep it only when its datetime content passes.
+        swapped_index = normalized.index.reorder_levels([1, 0]).set_names(canonical_names)
+        swapped_datetime = pd.to_datetime(
+            swapped_index.get_level_values("datetime"), utc=True, errors="coerce"
+        )
+        swapped_rate = float(swapped_datetime.notna().mean()) if len(swapped_datetime) else 0.0
+        if swapped_rate >= 0.9:
+            normalized.index = swapped_index
+            return deduplicate(normalized)
+        # A wider concat can mix both tuple orientations row by row:
+        # (datetime, instrument) and (instrument, datetime).  Level
+        # reordering cannot repair that case, so classify each row by which
+        # value is a plausible timestamp and rebuild the canonical index.
+        raw0 = normalized.index.get_level_values(0)
+        raw1 = normalized.index.get_level_values(1)
+        parsed0 = pd.to_datetime(raw0, utc=True, errors="coerce")
+        parsed1 = pd.to_datetime(raw1, utc=True, errors="coerce")
+        plausible0 = (
+            parsed0.notna()
+            & (parsed0 >= pd.Timestamp("2015-01-01", tz="UTC"))
+            & (parsed0 < pd.Timestamp("2035-01-01", tz="UTC"))
+        )
+        plausible1 = (
+            parsed1.notna()
+            & (parsed1 >= pd.Timestamp("2015-01-01", tz="UTC"))
+            & (parsed1 < pd.Timestamp("2035-01-01", tz="UTC"))
+        )
+        row_dt0 = plausible0 & ~plausible1
+        row_dt1 = plausible1 & ~plausible0
+        row_valid = row_dt0 | row_dt1
+        if float(row_valid.mean()) >= 0.9:
+            times = pd.Series(
+                pd.NaT,
+                index=np.arange(len(normalized)),
+                dtype="datetime64[ns, UTC]",
+            )
+            times.loc[row_dt0] = parsed0[row_dt0]
+            times.loc[row_dt1] = parsed1[row_dt1]
+            symbols = np.where(row_dt0, raw1, raw0)
+            normalized.index = pd.MultiIndex.from_arrays(
+                [symbols, times.to_numpy()],
+                names=canonical_names,
+            )
+            return deduplicate(normalized)
+    if parse_rate < 0.9:
+        samples = [
+            list(normalized.index.get_level_values(position)[:5])
+            for position in range(normalized.index.nlevels)
+        ]
+        raise ValueError(
+            "research index normalization produced an invalid datetime level: "
+            f"names={list(normalized.index.names)!r}, parse_rate={parse_rate:.4f}, "
+            f"level_samples={samples!r}"
+        )
+    return deduplicate(normalized)
 
 
 def _session_valid(index: pd.MultiIndex, horizon: int) -> pd.Series:
@@ -182,6 +369,23 @@ def _full_build_labels_and_masks(frame: pd.DataFrame, horizons: list[int]):
     future minutes. Missing minutes therefore invalidate the corresponding
     label instead of silently stretching the horizon.
     """
+    global LAST_LABEL_AUDIT
+    raw_index = frame.index
+    frame = _ensure_research_index(frame)
+    raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors="coerce")
+    normalized_times = pd.to_datetime(frame.index.get_level_values("datetime"), utc=True, errors="coerce")
+    audit: dict[str, Any] = {
+        "raw_index_names": list(raw_index.names),
+        "raw_index_length": int(len(raw_index)),
+        "raw_index_head": [list(value) for value in raw_index[:3].tolist()],
+        "raw_level0_parse_rate": float(raw_times.notna().mean()) if len(raw_times) else 0.0,
+        "normalized_index_names": list(frame.index.names),
+        "normalized_index_length": int(len(frame.index)),
+        "normalized_index_head": [list(value) for value in frame.index[:3].tolist()],
+        "normalized_datetime_min": str(normalized_times.min()) if len(normalized_times) else None,
+        "normalized_datetime_max": str(normalized_times.max()) if len(normalized_times) else None,
+        "close_non_null": int(pd.to_numeric(frame["bars_1m__close"], errors="coerce").notna().sum()),
+    }
     labels = pd.DataFrame(index=frame.index)
     masks: dict[str, pd.Series] = {}
     close_col = "bars_1m__close"
@@ -196,6 +400,9 @@ def _full_build_labels_and_masks(frame: pd.DataFrame, horizons: list[int]):
     current_close = pd.to_numeric(frame[close_col], errors="coerce").replace(0, np.nan)
     for horizon in sorted(set(int(value) for value in horizons)):
         session_valid = _session_valid(frame.index, horizon)
+        if horizon == min(int(value) for value in horizons):
+            audit["session_valid_first_horizon"] = int(session_valid.sum())
+            audit["future_close_first_horizon"] = int(_future_exact(frame, close_col, 1).notna().sum())
         entry_open = _future_exact(frame, open_col, 1).replace(0, np.nan)
         entry_vwap = _future_exact(frame, vwap_col, 1).replace(0, np.nan)
         entry_close = _future_exact(frame, close_col, 1).replace(0, np.nan)
@@ -295,7 +502,10 @@ def _full_build_labels_and_masks(frame: pd.DataFrame, horizons: list[int]):
         labels[cost_name] = (sum_cost / max(horizon, 1)).where(cost_valid)
         masks[cost_name] = cost_valid.astype("boolean")
 
-    return labels.replace([np.inf, -np.inf], np.nan).astype("float32"), masks
+    labels = labels.replace([np.inf, -np.inf], np.nan).astype("float32")
+    audit["label_non_null"] = {str(column): int(labels[column].notna().sum()) for column in labels.columns}
+    LAST_LABEL_AUDIT = audit
+    return labels, masks
 
 
 def _full_feature_registry(features: pd.DataFrame, evaluated: list[str], trade_date: str) -> pd.DataFrame:
@@ -404,10 +614,14 @@ def _wrap_run_date() -> None:
         # the full 184-prototype/expanded-spec rows even when unavailable.
         specs.to_parquet(out_dir / "factor_spec_registry.parquet", index=False)
         specs.to_csv(out_dir / "factor_spec_registry.csv", index=False)
+        (out_dir / "label_index_audit.json").write_text(
+            json.dumps(LAST_LABEL_AUDIT, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
         summary_path = out_dir / "factor_rank_ic_summary.parquet"
         if summary_path.exists():
             summary = pd.read_parquet(summary_path)
-            if "normalization_variant" not in summary.columns:
+            if not summary.empty and "neutralization" in summary.columns and "normalization_variant" not in summary.columns:
                 summary["normalization_variant"] = np.where(
                     summary["neutralization"].eq("none"), "raw", "neutralized"
                 )

@@ -404,6 +404,8 @@ def _column(frame: pd.DataFrame, name: str) -> pd.Series | None:
     candidates = [name]
     if name.startswith("bars_1m__") or name.startswith("trades_1m_core__"):
         candidates.append(name)
+        if name.startswith("trades_1m_core__"):
+            candidates.append(name.replace("trades_1m_core__", "trades_1m_sketch__", 1))
     else:
         candidates.extend(
             [
@@ -411,6 +413,8 @@ def _column(frame: pd.DataFrame, name: str) -> pd.Series | None:
                 f"trade_nvg__{name}",
                 f"hawkes_lite__{name}",
                 f"hawkes_derived__{name}",
+                f"trades_1m_sketch__{name}",
+                f"trades_1m_core__{name}",
             ]
         )
     for candidate in candidates:
@@ -435,7 +439,13 @@ def _raw(frame: pd.DataFrame, stem: str, window: str) -> pd.Series | None:
     return None
 
 
-def _first(frame: pd.DataFrame, *values: pd.Series | None) -> pd.Series | None:
+def _first(*values: pd.Series | None) -> pd.Series | None:
+    """Return the first available candidate series.
+
+    Callers pass candidate fields directly.  Keeping a frame parameter here
+    would silently discard the first candidate and make every fallback pair
+    depend on its second argument.
+    """
     for value in values:
         if value is not None:
             return value
@@ -709,6 +719,10 @@ def derive_prototype(frame: pd.DataFrame, prototype_id: str, window: str) -> pd.
     if p.startswith("F"):
         return finish(f.get(p))
     # G: minute-HVG risk and irreversibility supplement.
+    # The G family contains both minute-HVG (Wh) and trade-HVG (We)
+    # prototypes.  The registry assigns G10-G14 to the physical trade windows;
+    # keep their source lookup on that independent clock.
+    trade_hvg_window = window if window.endswith("s") else None
     g_return_degree = _column(frame, f"return_hvg_{minutes}_terminal_degree")
     g_return_long = _column(frame, f"return_hvg_{minutes}_terminal_long_edge_ratio")
     g_return_irrev = _column(frame, f"return_hvg_{minutes}_degree_irreversibility_js")
@@ -716,11 +730,11 @@ def derive_prototype(frame: pd.DataFrame, prototype_id: str, window: str) -> pd.
     g_abs_degree = _column(frame, f"abs_return_hvg_{minutes}_terminal_degree")
     g_abs_irrev = _column(frame, f"abs_return_hvg_{minutes}_degree_irreversibility_js")
     g_volume_irrev = _column(frame, f"volume_hvg_{minutes}_degree_irreversibility_js")
-    g_trade_price_irrev = _column(frame, f"trade_price_hvg_{sec}_degree_irreversibility_js")
-    g_trade_flow_irrev = _column(frame, f"trade_flow_hvg_{sec}_degree_irreversibility_js")
-    g_trade_activity_irrev = _column(frame, f"trade_activity_hvg_{sec}_degree_irreversibility_js")
-    g_trade_motif = _column(frame, f"trade_price_flow_hvg_{sec}_full_motif_cosine")
-    g_trade_hub = _column(frame, f"trade_price_flow_hvg_{sec}_full_hub_time_overlap")
+    g_trade_price_irrev = _column(frame, f"trade_price_hvg_{trade_hvg_window}_degree_irreversibility_js") if trade_hvg_window else None
+    g_trade_flow_irrev = _column(frame, f"trade_flow_hvg_{trade_hvg_window}_degree_irreversibility_js") if trade_hvg_window else None
+    g_trade_activity_irrev = _column(frame, f"trade_activity_hvg_{trade_hvg_window}_degree_irreversibility_js") if trade_hvg_window else None
+    g_trade_motif = _column(frame, f"trade_price_flow_hvg_{trade_hvg_window}_full_motif_cosine") if trade_hvg_window else None
+    g_trade_hub = _column(frame, f"trade_price_flow_hvg_{trade_hvg_window}_full_hub_time_overlap") if trade_hvg_window else None
     g = {
         "G01": g_return_degree,
         "G02": g_return_long,
@@ -771,12 +785,21 @@ def derive_prototype(frame: pd.DataFrame, prototype_id: str, window: str) -> pd.
         return finish_map(h)
     if p.startswith("H"):
         return finish(h.get(p))
+    large_trade_buy = _column(frame, "trades_1m_core__large_trade_buy_volume_proxy")
+    large_trade_sell = _column(frame, "trades_1m_core__large_trade_sell_volume_proxy")
+    large_trade_imbalance = (
+        (large_trade_buy - large_trade_sell) / (large_trade_buy + large_trade_sell + EPS)
+        if large_trade_buy is not None and large_trade_sell is not None
+        else None
+    )
+    trade_burstiness = _column(frame, "trades_1m_core__burstiness")
+    large_trade_share = _column(frame, "trades_1m_core__large_trade_dollar_share")
     i = {
         "I01": (ofi - sell) / (ofi + sell + EPS) if ofi is not None and sell is not None else None,
         "I02": _csz(signed_flow, groups) if signed_flow is not None else None,
         "I03": _column(frame, "trades_1m_core__flow_persistence_15m"),
         "I04": _column(frame, "trades_1m_core__flow_persistence_15m") * _csz(signed_flow, groups) if _column(frame, "trades_1m_core__flow_persistence_15m") is not None and signed_flow is not None else None,
-        "I05": (_column(frame, "trades_1m_core__large_trade_buy_volume_proxy") - _column(frame, "trades_1m_core__large_trade_sell_volume_proxy")) / (_column(frame, "trades_1m_core__large_trade_buy_volume_proxy") + _column(frame, "trades_1m_core__large_trade_sell_volume_proxy") + EPS) if _column(frame, "trades_1m_core__large_trade_buy_volume_proxy") is not None and _column(frame, "trades_1m_core__large_trade_sell_volume_proxy") is not None else None,
+        "I05": large_trade_imbalance,
         "I06": None,
         "I07": _column(frame, "trades_1m_core__block_trade_volume") / (volume + EPS) if _column(frame, "trades_1m_core__block_trade_volume") is not None and volume is not None else None,
         "I08": _column(frame, "trades_1m_core__odd_lot_volume") / (volume + EPS) if _column(frame, "trades_1m_core__odd_lot_volume") is not None and volume is not None else None,
@@ -785,7 +808,7 @@ def derive_prototype(frame: pd.DataFrame, prototype_id: str, window: str) -> pd.
         "I11": _column(frame, "trades_1m_core__trade_size_hhi"),
         "I12": _column(frame, "trades_1m_core__top_1pct_volume_share"),
         "I13": _column(frame, "trades_1m_core__burstiness") * np.sign(signed_flow) if _column(frame, "trades_1m_core__burstiness") is not None and signed_flow is not None else None,
-        "I14": _column(frame, "trades_1m_core__burstiness") * _column(frame, "trades_1m_core__large_trade_dollar_share") * (i["I05"] if i["I05"] is not None else 0) if _column(frame, "trades_1m_core__burstiness") is not None and _column(frame, "trades_1m_core__large_trade_dollar_share") is not None else None,
+        "I14": trade_burstiness * large_trade_share * (large_trade_imbalance if large_trade_imbalance is not None else 0) if trade_burstiness is not None and large_trade_share is not None else None,
         "I15": _column(frame, "trades_1m_core__sign_run_mean") * np.sign((ofi - sell) if ofi is not None and sell is not None else 0) if _column(frame, "trades_1m_core__sign_run_mean") is not None and ofi is not None and sell is not None else None,
         "I16": _column(frame, "trades_1m_core__sign_run_max") * np.sign((ofi - sell) if ofi is not None and sell is not None else 0) if _column(frame, "trades_1m_core__sign_run_max") is not None and ofi is not None and sell is not None else None,
         "I17": np.sign(ofi - sell) * (1 - _csz(_column(frame, "trades_1m_core__flow_sign_changes"), groups)) if ofi is not None and sell is not None and _column(frame, "trades_1m_core__flow_sign_changes") is not None else None,

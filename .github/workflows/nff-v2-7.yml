@@ -1,0 +1,129 @@
+name: NFF v2.7 atomic fastpath
+
+on:
+  push:
+    branches:
+      - agent/nff-research-atomic-fastpath-v2-7
+  pull_request:
+    paths:
+      - "nff_research/**"
+      - "configs/v2_7_atomic_full_campaign.yaml"
+      - "tests/test_nff_v2_7_schema_contract.py"
+      - "tests/test_nff_v2_7_models.py"
+      - "tests/test_nff_v2_7_factor_semantics.py"
+      - "tests/test_nff_v2_7_supplement_scope.py"
+      - "tests/test_nff_v2_7_symbol_id_join.py"
+      - "tests/test_nff_v2_7_prototype_contract.py"
+      - ".github/workflows/nff-v2-7.yml"
+
+jobs:
+  targeted-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Qlib and test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Syntax check v2.7 modules
+        run: |
+          python -m py_compile \
+            nff_research/nff_schema_contract.py \
+            nff_research/v2_7_prototype_contract.py \
+            nff_research/v2_7_atomic_campaign.py \
+            nff_research/v2_7_atomic_entry.py \
+            nff_research/v2_7_deciles.py \
+            nff_research/v2_7_formula_hardening.py \
+            nff_research/v2_7_formula_semantic_patch.py \
+            nff_research/v2_7_checkpoint_hardening.py \
+            nff_research/v2_7_physical_contract.py \
+            nff_research/v2_7_supplement_scope.py \
+            nff_research/v2_7_symbol_id_supplement.py \
+            nff_research/v2_7_models.py \
+            nff_research/v2_7_ablation.py \
+            nff_research/v2_7_runtime_hardening.py \
+            nff_research/v2_7_run.py \
+            nff_research/v2_7_launch.py \
+            tests/test_nff_v2_7_supplement_scope.py \
+            tests/test_nff_v2_7_symbol_id_join.py \
+            tests/test_nff_v2_7_prototype_contract.py
+      - name: Real-schema and semantic tests
+        run: |
+          pytest -q \
+            tests/test_nff_v2_7_schema_contract.py \
+            tests/test_nff_v2_7_models.py \
+            tests/test_nff_v2_7_factor_semantics.py \
+            tests/test_nff_v2_7_supplement_scope.py \
+            tests/test_nff_v2_7_symbol_id_join.py \
+            tests/test_nff_v2_7_prototype_contract.py
+      - name: Static semantic guards
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path("nff_research/v2_7_atomic_campaign.py").read_text(encoding="utf-8")
+          entry = Path("nff_research/v2_7_atomic_entry.py").read_text(encoding="utf-8")
+          contract = Path("nff_research/v2_7_prototype_contract.py").read_text(encoding="utf-8")
+          deciles = Path("nff_research/v2_7_deciles.py").read_text(encoding="utf-8")
+          formulas = Path("nff_research/v2_7_formula_hardening.py").read_text(encoding="utf-8")
+          semantics = Path("nff_research/v2_7_formula_semantic_patch.py").read_text(encoding="utf-8")
+          checkpoints = Path("nff_research/v2_7_checkpoint_hardening.py").read_text(encoding="utf-8")
+          physical = Path("nff_research/v2_7_physical_contract.py").read_text(encoding="utf-8")
+          supplement_scope = Path("nff_research/v2_7_supplement_scope.py").read_text(encoding="utf-8")
+          symbol_join = Path("nff_research/v2_7_symbol_id_supplement.py").read_text(encoding="utf-8")
+          models = Path("nff_research/v2_7_models.py").read_text(encoding="utf-8")
+          run = Path("nff_research/v2_7_run.py").read_text(encoding="utf-8")
+          hardening = Path("nff_research/v2_7_runtime_hardening.py").read_text(encoding="utf-8")
+          launch = Path("nff_research/v2_7_launch.py").read_text(encoding="utf-8")
+          required = {
+              "real directional supplement": "minute_nvg_edge_raw",
+              "factor block checkpoint": "factor_block_size",
+              "future lookup cache": "FUTURE_CACHE",
+              "true venue HHI": "level[\"hhi\"] = share.pow(2)",
+              "effective duration correction": 'result["H23"] = duration',
+              "large trade direction correction": 'result["I06"]',
+              "vectorized deciles": "np.bincount",
+          }
+          for label, token in required.items():
+              assert token in source, f"missing semantic guard: {label}"
+          assert "EXPECTED_PROTOTYPES = 194" in contract
+          assert "IMPLEMENTATION_SNAPSHOT" in contract
+          assert "AUTHORITATIVE_MARKDOWN" in contract
+          assert "_PROTOTYPE_CONTRACT.install(_FULL_FACTOR_ENGINE)" in run
+          assert "C._shift(activity, 1, frame)" in entry
+          assert "pd.qcut(ranks, 10, labels=False, duplicates=\"drop\")" in deciles
+          assert "_QCUT_LABEL_CACHE" in deciles
+          assert "pandas-qcut-label-cache-v2.7.1" in checkpoints
+          assert 'result["A14"]' in formulas and 'result["A16"]' in formulas
+          assert 'k["K22"]' in formulas and 'traditional__realized_vol_5m' in formulas
+          assert 'result["B04"]' in semantics and 'result["D04"]' in semantics
+          assert 'result["E20"]' in semantics and 'result["E21"]' in semantics
+          assert "campaign.R.decile_curves = deciles_checkpointed" in checkpoints
+          assert "upstream_fingerprint" in checkpoints
+          assert "PHYSICAL_EXECUTABLE_COUNT = 464" in physical
+          assert "LEGACY_FORMAL_COUNT = 476" in physical
+          assert '"C": ("10m", "15m", "30m")' in physical
+          assert '"G": ("15m", "30m", "60m")' in physical
+          assert "legacy_contract_gap.json" in physical
+          assert "generated - allowed" in supplement_scope
+          assert "allowed_s_factors" in supplement_scope
+          assert "symbol_id_event_time" in symbol_join
+          assert "ceil(\"1min\")" in symbol_join
+          assert "supplement_join_audit.json" in symbol_join
+          assert 'long_index = block.index[ranked >= 1.0 - quantile]' in models
+          assert 'short_index = block.index[ranked <= quantile]' in models
+          assert '"elastic_net"' in models and '"lightgbm"' in models and '"gru"' in models
+          assert "run_family_ablation" in run
+          assert "factor_resolution.parquet" in hardening
+          assert "preinstall_factor_engine_fallback" in hardening
+          assert "price_path_" in hardening and "volume_path_" in hardening
+          assert "FORMULAS.install(C, HARDEN)" in launch
+          assert "PHYSICAL.install(C)" in launch
+          assert "SUPPLEMENT_SCOPE.install(C)" in launch
+          assert "SYMBOL_JOIN.install(C)" in launch
+          assert "C._decile_feature_rows = _exact_decile_feature_rows" in launch
+          PY
