@@ -215,24 +215,33 @@ def install(P: Any) -> None:
             )
             track_meta_path = track_root / "meta.json"
             track_success = track_root / "_SUCCESS"
+            summary_path = track_root / "factor_rank_ic_summary.parquet"
+            decile_path = track_root / "decile_curves.parquet"
 
-            reused = False
-            if track_success.exists() and track_meta_path.exists():
+            existing: dict[str, Any] = {}
+            if track_meta_path.exists():
                 try:
                     existing = json.loads(track_meta_path.read_text(encoding="utf-8"))
                 except Exception:
                     existing = {}
-                if existing.get("track_contract") == track_contract:
-                    summary_path = track_root / "factor_rank_ic_summary.parquet"
-                    decile_path = track_root / "decile_curves.parquet"
-                    if summary_path.exists():
-                        summary_parts.append(pd.read_parquet(summary_path))
-                        if decile_path.exists():
-                            decile_parts.append(pd.read_parquet(decile_path))
-                        track_meta.append({**existing, "status": "reused"})
-                        reused = True
-            if reused:
+            reusable = (
+                track_success.exists()
+                and existing.get("track_contract") == track_contract
+                and summary_path.exists()
+            )
+            if reusable:
+                summary_parts.append(pd.read_parquet(summary_path))
+                if decile_path.exists():
+                    decile_parts.append(pd.read_parquet(decile_path))
+                track_meta.append({**existing, "status": "reused"})
                 continue
+
+            # Track contracts are independently restartable.  Remove stale
+            # outputs before writing a new contract so a previously enabled
+            # decile path cannot leak into a later no-decile/no-work run.
+            track_success.unlink(missing_ok=True)
+            summary_path.unlink(missing_ok=True)
+            decile_path.unlink(missing_ok=True)
 
             if not names or track_labels.empty:
                 empty_meta = {
@@ -298,17 +307,9 @@ def install(P: Any) -> None:
                 P.R.universe_masks = original_universes
                 P.R.CORE_DECILE_FEATURES = original_deciles
 
-            P._atomic_parquet(
-                summary,
-                track_root / "factor_rank_ic_summary.parquet",
-                index=False,
-            )
+            P._atomic_parquet(summary, summary_path, index=False)
             if not deciles.empty:
-                P._atomic_parquet(
-                    deciles,
-                    track_root / "decile_curves.parquet",
-                    index=False,
-                )
+                P._atomic_parquet(deciles, decile_path, index=False)
             track_record = {
                 "version": P.VERSION,
                 "trade_date": trade_date,
@@ -351,6 +352,8 @@ def install(P: Any) -> None:
         )
         if not deciles.empty:
             P._atomic_parquet(deciles, root / "decile_curves.parquet", index=False)
+        else:
+            (root / "decile_curves.parquet").unlink(missing_ok=True)
         meta = {
             "version": P.VERSION,
             "trade_date": trade_date,
