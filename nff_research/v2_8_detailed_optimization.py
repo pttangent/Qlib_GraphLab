@@ -22,6 +22,7 @@ focuses on eliminating redundant cross-track work rather than replacing an
 already block-oriented linear algebra kernel.
 """
 
+from contextlib import contextmanager
 import gc
 import json
 import time
@@ -136,6 +137,38 @@ def _inner_decile_cache(P: Any) -> Path | None:
     return P.C.CTX.root / "stages" / "decile_curves.parquet"
 
 
+@contextmanager
+def _bounded_internal_executor(P: Any):
+    """Bound legacy internal ThreadPoolExecutor calls to the stage budget.
+
+    v2.7's rank-cache path has an internal universe pool whose historical cap
+    was three workers.  At eight date processes that would silently turn the
+    intended 8×2 shape into as many as 24 Python threads before BLAS threads are
+    counted.  Patch only the function-global executor during this date worker.
+    """
+    limit = max(1, int(getattr(P.C.CTX, "intra_workers", 1))) if P.C.CTX is not None else 1
+    globals_dict = getattr(P.R.minute_rank_ic_summary, "__globals__", {})
+    original = globals_dict.get("ThreadPoolExecutor")
+    if original is None:
+        yield
+        return
+
+    def bounded(*args: Any, **kwargs: Any):
+        if args:
+            requested = max(1, int(args[0]))
+            args = (min(requested, limit), *args[1:])
+        else:
+            requested = max(1, int(kwargs.get("max_workers", limit)))
+            kwargs["max_workers"] = min(requested, limit)
+        return original(*args, **kwargs)
+
+    globals_dict["ThreadPoolExecutor"] = bounded
+    try:
+        yield
+    finally:
+        globals_dict["ThreadPoolExecutor"] = original
+
+
 def install(P: Any) -> None:
     def detailed_date_track_streaming(
         config: dict[str, Any], trade_date: str
@@ -225,41 +258,42 @@ def install(P: Any) -> None:
             original_deciles = list(P.R.CORE_DECILE_FEATURES)
             P.R.CORE_DECILE_FEATURES = names
             try:
-                summary, residual_cache = P.R.minute_rank_ic_summary(
-                    features,
-                    track_labels,
-                    track_masks,
-                    controls,
-                    trade_date,
-                    min_n,
-                )
-                summary = summary.copy()
-                summary["selection_track"] = track
-                summary["detailed_label_scope"] = ",".join(families)
-
-                if track in decile_tracks:
-                    # The v2.7 internal decile cache is date-global.  A prior
-                    # all-candidate detailed run must not be mistaken for this
-                    # narrower alpha-only track contract.
-                    inner_cache = _inner_decile_cache(P)
-                    if inner_cache is not None:
-                        inner_cache.unlink(missing_ok=True)
-                        inner_cache.with_suffix(".json").unlink(missing_ok=True)
-                    deciles = P.R.decile_curves(
+                with _bounded_internal_executor(P):
+                    summary, residual_cache = P.R.minute_rank_ic_summary(
                         features,
                         track_labels,
                         track_masks,
                         controls,
-                        residual_cache,
                         trade_date,
                         min_n,
                     )
-                    if not deciles.empty:
-                        deciles = deciles.copy()
-                        deciles["selection_track"] = track
-                else:
-                    deciles = pd.DataFrame()
-                del residual_cache
+                    summary = summary.copy()
+                    summary["selection_track"] = track
+                    summary["detailed_label_scope"] = ",".join(families)
+
+                    if track in decile_tracks:
+                        # The v2.7 internal decile cache is date-global.  A prior
+                        # all-candidate detailed run must not be mistaken for this
+                        # narrower alpha-only track contract.
+                        inner_cache = _inner_decile_cache(P)
+                        if inner_cache is not None:
+                            inner_cache.unlink(missing_ok=True)
+                            inner_cache.with_suffix(".json").unlink(missing_ok=True)
+                        deciles = P.R.decile_curves(
+                            features,
+                            track_labels,
+                            track_masks,
+                            controls,
+                            residual_cache,
+                            trade_date,
+                            min_n,
+                        )
+                        if not deciles.empty:
+                            deciles = deciles.copy()
+                            deciles["selection_track"] = track
+                    else:
+                        deciles = pd.DataFrame()
+                    del residual_cache
             finally:
                 P.R.universe_masks = original_universes
                 P.R.CORE_DECILE_FEATURES = original_deciles
@@ -287,6 +321,7 @@ def install(P: Any) -> None:
                 "summary_rows": int(len(summary)),
                 "decile_rows": int(len(deciles)),
                 "deciles_enabled": track in decile_tracks,
+                "intra_workers": int(getattr(P.C.CTX, "intra_workers", 1)) if P.C.CTX is not None else 1,
                 "elapsed_seconds": time.perf_counter() - track_started,
             }
             P._atomic_json(track_meta_path, track_record)
