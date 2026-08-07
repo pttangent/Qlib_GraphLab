@@ -7,17 +7,25 @@ run:
   start_date: "2026-01-02"
   end_date: "2026-07-22"
   horizons: [1, 5, 15, 30, 60]
-  # Two date processes retain at most two wide daily frames. Each process uses
-  # eight shared-memory threads for factor/decile work, filling about 16 CPU
-  # slots without multiplying daily RSS sixteen times.
+  # Stage-aware scheduling allows factor work to use six date workers when
+  # memory headroom supports it, while portfolio_proxy is capped separately.
   initial_parallel: 2
-  max_parallel: 3
+  max_parallel: 6
   min_parallel: 1
   target_cpu_percent: 90
   memory_high_water_percent: 78
   memory_min_available_gb: 32
   disk_free_floor_gb: 50
   launch_batch_size: 1
+  stage_parallel_caps:
+    default: 3
+    factor_block: 6
+    feature_output: 6
+    merge_venue: 6
+    ic_and_neutralization: 3
+    decile_curves: 4
+    portfolio_proxy: 2
+    incremental_model_screen: 2
   retries: 3
   min_cross_section_n: 30
   allow_mixed_contracts: true

@@ -136,6 +136,16 @@ TURNOVER_CONTROL_POLICY = {
 }
 ENABLED_PORTFOLIO_VARIANTS: list[str] | None = None
 PORTFOLIO_WORKERS = 8
+STAGE_PARALLEL_CAPS: dict[str, int] = {
+    "default": 3,
+    "factor_block": 6,
+    "feature_output": 6,
+    "merge_venue": 6,
+    "ic_and_neutralization": 3,
+    "decile_curves": 4,
+    "portfolio_proxy": 2,
+    "incremental_model_screen": 2,
+}
 
 RESEARCH_VERSION = "2.3"
 BASE_RUNNER_VERSION = "2.1"
@@ -309,7 +319,7 @@ def load_yaml_config(path: str | None) -> dict[str, Any]:
 
 
 def apply_config_globals(config: dict[str, Any]) -> None:
-    global WAREHOUSE_ROOT, RESEARCH_ROOT, RAW_1M_ROOT, NFF_SRC_ROOT, INDUSTRY_METADATA_PATH, CONTROLS_ROOT, TURNOVER_CONTROL_POLICY, ENABLED_PORTFOLIO_VARIANTS, PORTFOLIO_WORKERS
+    global WAREHOUSE_ROOT, RESEARCH_ROOT, RAW_1M_ROOT, NFF_SRC_ROOT, INDUSTRY_METADATA_PATH, CONTROLS_ROOT, TURNOVER_CONTROL_POLICY, ENABLED_PORTFOLIO_VARIANTS, PORTFOLIO_WORKERS, STAGE_PARALLEL_CAPS
     paths = config.get("local_paths", {}) if isinstance(config.get("local_paths", {}), dict) else {}
     if paths.get("warehouse_root"):
         WAREHOUSE_ROOT = Path(paths["warehouse_root"])
@@ -325,6 +335,15 @@ def apply_config_globals(config: dict[str, Any]) -> None:
     portfolio = config.get("portfolio_proxy", {}) if isinstance(config.get("portfolio_proxy", {}), dict) else {}
     atomic = config.get("atomic", {}) if isinstance(config.get("atomic", {}), dict) else {}
     PORTFOLIO_WORKERS = max(1, int(portfolio.get("workers", atomic.get("intra_date_workers", PORTFOLIO_WORKERS))))
+    configured_stage_caps = run_cfg.get("stage_parallel_caps", {}) if isinstance(run_cfg := config.get("run", {}), dict) else {}
+    if isinstance(configured_stage_caps, dict):
+        STAGE_PARALLEL_CAPS = {
+            **STAGE_PARALLEL_CAPS,
+            **{
+                str(stage): max(1, int(cap))
+                for stage, cap in configured_stage_caps.items()
+            },
+        }
     configured_turnover = portfolio.get("turnover_controlled_variant", {})
     if isinstance(configured_turnover, dict):
         TURNOVER_CONTROL_POLICY = {
@@ -3244,6 +3263,8 @@ def adaptive_parallel_target(
     safe_streak: int,
 ) -> tuple[int, str]:
     """Change one worker at a time after sustained headroom; shed capacity quickly."""
+    if current_parallel > max_parallel:
+        return max(min_parallel, max_parallel), "stage_parallel_cap"
     if (
         float(resources["memory_percent"]) >= memory_high_water
         or float(resources["memory_available_gb"]) <= memory_min_available_gb
@@ -3292,6 +3313,63 @@ def resource_snapshot(out_root: Path) -> dict[str, Any]:
         "worker_rss_total_gb": round(sum(worker_rss) / 1024**3, 3),
         "worker_rss_max_gb": round(max(worker_rss, default=0) / 1024**3, 3),
     }
+
+
+def active_worker_stage_summary(out_root: Path, trade_dates: list[str]) -> dict[str, Any]:
+    """Read the latest stage event for each active date without touching workers.
+
+    The date scheduler only knows process-level state. Atomic workers expose
+    stage events in their own checkpoint directories, which lets the parent
+    use a conservative cap for memory-heavy stages such as portfolio_proxy.
+    """
+    stages: dict[str, str] = {}
+    for trade_date in trade_dates:
+        events_path = out_root / "atomic_checkpoints" / f"date={trade_date}" / "stage_events.jsonl"
+        if not events_path.exists():
+            stages[trade_date] = "unknown"
+            continue
+        last: dict[str, Any] | None = None
+        try:
+            with events_path.open("rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                position = handle.tell()
+                buffer = b""
+                while position > 0 and not buffer:
+                    step = min(8192, position)
+                    position -= step
+                    handle.seek(position)
+                    buffer = handle.read(step) + buffer
+                    lines = buffer.splitlines()
+                    if position == 0 or len(lines) > 1:
+                        for raw in reversed(lines):
+                            if raw.strip():
+                                last = json.loads(raw.decode("utf-8"))
+                                break
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            last = None
+        stages[trade_date] = str(last.get("stage", "unknown")) if last else "unknown"
+    counts: dict[str, int] = {}
+    for stage in stages.values():
+        counts[stage] = counts.get(stage, 0) + 1
+    return {"dates": stages, "counts": counts}
+
+
+def stage_parallel_cap(
+    out_root: Path,
+    trade_dates: list[str],
+    max_parallel: int,
+    stage_caps: dict[str, int] | None = None,
+) -> tuple[int, dict[str, Any]]:
+    """Return a conservative cap for the stages currently occupying workers."""
+    caps = stage_caps or STAGE_PARALLEL_CAPS
+    summary = active_worker_stage_summary(out_root, trade_dates)
+    active = [stage for stage in summary["dates"].values() if stage != "unknown"]
+    if not active:
+        return min(max_parallel, int(caps.get("default", max_parallel))), summary
+    cap = min(int(caps.get(stage, caps.get("default", max_parallel))) for stage in active)
+    summary["cap_by_stage"] = {stage: int(caps.get(stage, caps.get("default", max_parallel))) for stage in sorted(set(active))}
+    summary["effective_cap"] = min(max_parallel, cap)
+    return min(max_parallel, cap), summary
 
 
 def worker_command(args: argparse.Namespace, out_root: Path, controls_path: Path, trade_date: str) -> list[str]:
@@ -3484,6 +3562,11 @@ def main() -> int:
                 update_status(status_path, status="blocked_disk_free_floor", stage="paused", last_failure=failure, resources=resources)
                 return 3
             else:
+                stage_cap, stage_summary = stage_parallel_cap(
+                    out_root,
+                    list(running),
+                    args.max_parallel,
+                )
                 safe_sample = (
                     resources["memory_percent"] < args.memory_high_water - 15
                     and resources["memory_available_gb"] > args.memory_min_available_gb
@@ -3496,7 +3579,7 @@ def main() -> int:
                     resources,
                     current_parallel=current_parallel,
                     min_parallel=args.min_parallel,
-                    max_parallel=args.max_parallel,
+                    max_parallel=stage_cap,
                     target_cpu=args.target_cpu,
                     memory_high_water=args.memory_high_water,
                     memory_min_available_gb=args.memory_min_available_gb,
@@ -3511,6 +3594,8 @@ def main() -> int:
                         "reason": tune_reason,
                         "safe_streak": safe_streak,
                         "running_workers": len(running),
+                        "stage_parallel_cap": stage_cap,
+                        "active_worker_stages": stage_summary,
                         "resources": resources,
                     },
                 )
