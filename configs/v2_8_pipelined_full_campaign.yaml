@@ -13,7 +13,7 @@ run:
 
 atomic:
   factor_block_size: 8
-  # Date-level parallelism now varies by stage.  Four intra-date threads keep
+  # Date-level parallelism now varies by stage. Four intra-date threads keep
   # individual processes bounded while the stage scheduler supplies CPU width.
   intra_date_workers: 4
   exact_future_lookup_cache: true
@@ -29,26 +29,20 @@ local_paths:
   industry_metadata: "D:/DEV/AnotherNetworkFactory/warehouses/metadata/symbol_metadata.parquet"
 
 pipeline:
-  # Optional explicit controls file.  When omitted the standard v2.1 path for
-  # the configured date range is used.
   controls_path: null
   memory_reserve_gb: 28
+  minimum_launch_headroom_gb: 8
   portfolio_threads: 4
   stages:
-    # Materialization includes NFF loading, supplements, exact labels and 464
-    # factor blocks.  It no longer retains the wide frame for IC/portfolio.
     materialize:
       max_workers: 6
       estimated_worker_gb: 12
-    # Raw IC streams factor blocks and does not build residual matrices.
     basic_screen:
       max_workers: 8
       estimated_worker_gb: 6
-    # Neutralization and deciles run only on diagnostic candidates.
     detailed:
       max_workers: 4
       estimated_worker_gb: 16
-    # Portfolio runs only on frozen portfolio candidates.
     portfolio:
       max_workers: 6
       estimated_worker_gb: 8
@@ -56,14 +50,13 @@ pipeline:
 selection:
   mode: frozen_training_window
   train_days: 60
-  primary_label: return_vwap_to_vwap
-  primary_horizons: [5, 15, 30, 60]
   primary_universe: final_trading_universe
   screen_universes:
     - all_pit_eligible
     - final_trading_universe
-  # Cheap raw screen still preserves all requested label families.  Expensive
-  # neutralization/deciles are applied only after selection.
+  # All 464 physical factors receive this cheap raw screen. Expensive
+  # neutralization, deciles and portfolio work happen only after multi-track
+  # training-period selection.
   screen_labels:
     - family: return_open_to_open
       horizons: [1, 5, 15, 30, 60]
@@ -79,16 +72,40 @@ selection:
       horizons: [5, 15, 30, 60]
     - family: execution_cost_proxy
       horizons: [5, 15, 30, 60]
+  tracks:
+    # Only this track may enter portfolio proxy. Direction means expected
+    # future-return direction and is frozen from the training window.
+    - name: alpha
+      label_families: [return_vwap_to_vwap]
+      horizons: [5, 15, 30, 60]
+      detailed_max_features: 80
+      portfolio_max_features: 40
+      detailed_max_per_family: 14
+      portfolio_max_per_family: 8
+    # These factors remain available for risk models and gates even if their
+    # direct return IC is weak. Their sign is association with the risk target,
+    # not a long/short trading direction.
+    - name: risk_regime
+      label_families:
+        - realized_volatility
+        - liquidity_deterioration
+        - jump_tail_event
+      horizons: [5, 15, 30, 60]
+      detailed_max_features: 30
+      portfolio_max_features: 0
+      detailed_max_per_family: 8
+    - name: cost_liquidity
+      label_families: [execution_cost_proxy]
+      horizons: [5, 15, 30, 60]
+      detailed_max_features: 10
+      portfolio_max_features: 0
+      detailed_max_per_family: 4
   minimum_valid_days: 20
   minimum_coverage: 0.70
   minimum_directional_day_ratio: 0.55
   minimum_per_family: 2
-  diagnostic_max_features: 120
-  diagnostic_max_per_family: 20
-  portfolio_max_features: 40
-  portfolio_max_per_family: 8
-  # False is the production-safe default.  Portfolio proxy begins after the
-  # 60-date selection window and uses frozen factor signs.
+  # Production-safe default: portfolio dates begin after the 60-date frozen
+  # training selection window.
   allow_in_sample_portfolio: false
 
 study:
