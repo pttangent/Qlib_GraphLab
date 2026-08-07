@@ -8,16 +8,16 @@
   "status": "running",
   "total_units": 138,
   "completed_units": 0,
-  "parallel": 1,
-  "running_workers": 1,
+  "parallel": 2,
+  "running_workers": 2,
   "resources": {
-    "cpu_percent": 19.3,
-    "memory_percent": 41.4,
-    "memory_available_gb": 74.65,
-    "disk_free_gb": 361.8,
-    "worker_process_count": 2,
-    "worker_rss_total_gb": 29.442,
-    "worker_rss_max_gb": 29.433
+    "cpu_percent": 27.6,
+    "memory_percent": 65.5,
+    "memory_available_gb": 43.92,
+    "disk_free_gb": 357.22,
+    "worker_process_count": 3,
+    "worker_rss_total_gb": 60.737,
+    "worker_rss_max_gb": 33.128
   },
   "horizons": [
     1,
@@ -37,21 +37,24 @@
   ],
   "run_contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
   "effective_config": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\effective_config.json",
-  "heartbeat_utc": "2026-08-07T02:29:38.782286+00:00",
+  "heartbeat_utc": "2026-08-07T02:50:04.384190+00:00",
   "running_units": [
     {
       "trade_date": "2026-03-03"
+    },
+    {
+      "trade_date": "2026-03-09"
     }
   ],
-  "pending_units": 137,
+  "pending_units": 136,
   "failure_count": 0,
   "factor_completed": 464,
   "factor_expected": 464,
   "factor_progress_pct": 100.0,
   "factor_completed_blocks": 68,
   "factor_checkpoint_level": "family/window/factor-block",
-  "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-03-03\\factors",
-  "factor_last_event_utc": "2026-08-07T02:16:52.673527+00:00",
+  "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-03-09\\factors",
+  "factor_last_event_utc": "2026-08-07T02:39:37.031428+00:00",
   "factor_current_stage": "ic_and_neutralization",
   "factor_current_state": "running",
   "factor_current_family": "S",
