@@ -30,6 +30,7 @@ jobs:
           python -m py_compile \
             nff_research/v2_8_pipeline.py \
             nff_research/v2_8_runtime_hardening.py \
+            nff_research/v2_8_source_contract.py \
             nff_research/v2_8_launch.py \
             tests/test_nff_v2_8_pipeline.py
       - name: Run v2.8 contract tests
@@ -40,6 +41,7 @@ jobs:
           from pathlib import Path
           source = Path("nff_research/v2_8_pipeline.py").read_text(encoding="utf-8")
           hardening = Path("nff_research/v2_8_runtime_hardening.py").read_text(encoding="utf-8")
+          source_contract = Path("nff_research/v2_8_source_contract.py").read_text(encoding="utf-8")
           launch = Path("nff_research/v2_8_launch.py").read_text(encoding="utf-8")
           config = Path("configs/v2_8_pipelined_full_campaign.yaml").read_text(encoding="utf-8")
           required = {
@@ -59,5 +61,9 @@ jobs:
           assert "portfolio_max_features: 40" in config
           assert "admission_paused" in hardening
           assert "with_atomic_context" in hardening
+          assert "upstream_fingerprint" in source_contract
+          assert "candidate_manifest_sha256" in source_contract
+          assert "screen_fingerprint" in source_contract
           assert "HARDENING.install(PIPELINE)" in launch
+          assert "SOURCE_CONTRACT.install(PIPELINE)" in launch
           PY
