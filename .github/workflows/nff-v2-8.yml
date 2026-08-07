@@ -1,0 +1,103 @@
+name: NFF v2.8 staged selection
+
+on:
+  push:
+    branches:
+      - agent/nff-research-pipelined-selection-v2-8
+  pull_request:
+    paths:
+      - "nff_research/v2_8_*.py"
+      - "configs/v2_8_pipelined_full_campaign.yaml"
+      - "tests/test_nff_v2_8_*.py"
+      - ".github/workflows/nff-v2-8.yml"
+
+jobs:
+  pipeline-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Qlib and test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Compile v2.8 entrypoints
+        run: |
+          python -m py_compile \
+            nff_research/v2_8_pipeline.py \
+            nff_research/v2_8_runtime_hardening.py \
+            nff_research/v2_8_screen_optimization.py \
+            nff_research/v2_8_selection_tracks.py \
+            nff_research/v2_8_strict_training_window.py \
+            nff_research/v2_8_portfolio_optimization.py \
+            nff_research/v2_8_source_contract.py \
+            nff_research/v2_8_stage_contracts.py \
+            nff_research/v2_8_bootstrap_scheduler.py \
+            nff_research/v2_8_launch.py \
+            tests/test_nff_v2_8_pipeline.py \
+            tests/test_nff_v2_8_bootstrap_scheduler.py
+      - name: Run v2.8 contract tests
+        run: pytest -q tests/test_nff_v2_8_pipeline.py tests/test_nff_v2_8_bootstrap_scheduler.py
+      - name: Static staged-DAG guards
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path("nff_research/v2_8_pipeline.py").read_text(encoding="utf-8")
+          hardening = Path("nff_research/v2_8_runtime_hardening.py").read_text(encoding="utf-8")
+          screen_opt = Path("nff_research/v2_8_screen_optimization.py").read_text(encoding="utf-8")
+          tracks = Path("nff_research/v2_8_selection_tracks.py").read_text(encoding="utf-8")
+          strict = Path("nff_research/v2_8_strict_training_window.py").read_text(encoding="utf-8")
+          portfolio_opt = Path("nff_research/v2_8_portfolio_optimization.py").read_text(encoding="utf-8")
+          source_contract = Path("nff_research/v2_8_source_contract.py").read_text(encoding="utf-8")
+          stage_contracts = Path("nff_research/v2_8_stage_contracts.py").read_text(encoding="utf-8")
+          bootstrap = Path("nff_research/v2_8_bootstrap_scheduler.py").read_text(encoding="utf-8")
+          launch = Path("nff_research/v2_8_launch.py").read_text(encoding="utf-8")
+          config = Path("configs/v2_8_pipelined_full_campaign.yaml").read_text(encoding="utf-8")
+          required = {
+              "all physical factors screened": "physical_factor_count",
+              "factor-block streaming": "_iter_factor_blocks",
+              "training-only candidate freeze": "portfolio_eligible_after",
+              "candidate-only detailed stage": "candidate_scope\"] == scope",
+              "direction-frozen portfolio": "factors[name].astype(\"float32\") * float(directions[name])",
+              "stage memory budget": "estimated_worker_gb",
+              "independent date-stage success": "_stage_success",
+          }
+          for label, token in required.items():
+              assert token in source, f"missing v2.8 guard: {label}"
+          assert "materialize -> basic_screen -> select -> detailed -> portfolio" in source
+          assert "allow_in_sample_portfolio: false" in config
+          assert "detailed_max_features: 80" in config
+          assert "detailed_max_features: 30" in config
+          assert "detailed_max_features: 10" in config
+          assert "portfolio_max_features: 40" in config
+          assert "risk_regime" in config and "cost_liquidity" in config
+          assert "admission_paused" in hardening
+          assert "contract verification" in hardening
+          assert "_runtime_dates" in hardening
+          assert "rank-mask-cache-v2.8.1" in screen_opt
+          assert "computed_blocks" in screen_opt and "reused_blocks" in screen_opt
+          assert "only the alpha selection track may emit portfolio candidates" in tracks
+          assert "target_association_not_trade_direction" in tracks
+          assert "exact first" in strict and "chronological" in strict
+          assert "single_weight_path_expansion" in portfolio_opt
+          assert "upstream_fingerprint" in source_contract
+          assert "candidate_manifest_sha256" in source_contract
+          assert "screen_fingerprint_dates" in source_contract
+          assert "Changing a portfolio threshold must not invalidate physical factor blocks" in stage_contracts
+          assert 'run_stage("materialize", training)' in bootstrap
+          assert 'run_stage("basic_screen", training)' in bootstrap
+          assert 'run_stage("select")' in bootstrap
+          assert 'run_stage("materialize", remaining)' in bootstrap
+          assert "HARDENING.install(PIPELINE)" in launch
+          assert "SCREEN_OPT.install(PIPELINE)" in launch
+          assert "SELECTION_TRACKS.install(PIPELINE)" in launch
+          assert "STRICT_TRAINING.install(PIPELINE)" in launch
+          assert "PORTFOLIO_OPT.install(PIPELINE)" in launch
+          assert "SOURCE_CONTRACT.install(PIPELINE)" in launch
+          assert "STAGE_CONTRACTS.install(PIPELINE)" in launch
+          assert "BOOTSTRAP_SCHEDULER.install(PIPELINE)" in launch
+          PY

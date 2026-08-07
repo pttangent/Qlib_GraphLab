@@ -1913,6 +1913,15 @@ def _turnover_controlled_weights(
         values.update({(dt, symbol): weight for symbol in symbols})
     weights = pd.Series(values, dtype="float64")
     weights.index = pd.MultiIndex.from_tuples(weights.index, names=["datetime", "instrument"])
+    # Keep the weight index contract identical to the input block.  The
+    # portfolio path groups a (instrument, datetime) MultiIndex by datetime,
+    # while the hysteresis builder naturally emits (datetime, instrument).
+    # Reordering here keeps label/ADV lookups and same-sleeve state aligned.
+    if isinstance(block.index, pd.MultiIndex):
+        block_names = list(block.index.names)
+        weight_names = list(weights.index.names)
+        if set(block_names) == set(weight_names) and block_names != weight_names:
+            weights = weights.reorder_levels(block_names).sort_index()
     return weights, {
         "signal_percentiles": current_ranks,
         "hold_periods": current_hold_periods,
