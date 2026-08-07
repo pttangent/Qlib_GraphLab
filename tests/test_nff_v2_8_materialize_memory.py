@@ -90,6 +90,35 @@ def test_streaming_factor_blocks_are_not_concatenated_back(tmp_path: Path) -> No
     assert len(payload["blocks"]) == 2
 
 
+def test_streaming_materialize_uses_preserved_non_strict_feature_builder() -> None:
+    expected = object()
+    strict = lambda frame: (_ for _ in ()).throw(
+        AssertionError("strict physical gate must not run on streamed frame")
+    )
+    base = lambda frame: expected
+    pipeline = SimpleNamespace(
+        C=SimpleNamespace(
+            _base_add_all_features=base,
+            add_all_features=strict,
+        )
+    )
+
+    assert M._streaming_feature_builder(pipeline)(pd.DataFrame()) is expected
+
+
+def test_streaming_completion_audit_records_block_authority() -> None:
+    audit = M._streaming_completion_audit(
+        {"f1", "f2"},
+        pd.DataFrame({"feature": ["f1", "f2"]}),
+        wide_frame_columns=3,
+    )
+
+    assert audit["materialized_columns"] == 2
+    assert audit["absent_columns"] == []
+    assert audit["materialization_mode"] == "stream_factor_blocks"
+    assert audit["wide_frame_columns"] == 3
+
+
 def test_checkpoint_reuse_uses_parquet_metadata_not_dataframe_load(
     tmp_path: Path,
     monkeypatch,

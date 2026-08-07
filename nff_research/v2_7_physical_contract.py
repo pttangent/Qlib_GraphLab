@@ -145,6 +145,10 @@ def _k_anchor_frame(frame: pd.DataFrame) -> pd.DataFrame:
 def install(campaign: Any) -> None:
     base_configure = campaign.configure_registry
     base_add_all = campaign._add_all_features
+    # Keep the pre-gate builder available to the v2.8 streaming materializer.
+    # The strict wrapper below is correct for the legacy wide-frame path, but
+    # streamed factor blocks are intentionally absent from that live frame.
+    campaign._base_add_all_features = base_add_all
     base_correct = campaign._correct_family
     base_factor_contract = campaign._factor_contract
     state: dict[str, Any] = {

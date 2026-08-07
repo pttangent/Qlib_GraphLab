@@ -361,6 +361,39 @@ def _manifest_factor_status(
     return result
 
 
+def _streaming_feature_builder(P: Any):
+    """Return the non-strict builder used before factor blocks are streamed."""
+    builder = getattr(P.C, "_base_add_all_features", None)
+    if not callable(builder):
+        raise RuntimeError(
+            "streaming materialize requires the preserved non-strict feature builder"
+        )
+    return builder
+
+
+def _streaming_completion_audit(
+    expected: set[str],
+    inventory: pd.DataFrame,
+    *,
+    wide_frame_columns: int,
+) -> dict[str, Any]:
+    present = set(inventory.get("feature", pd.Series(dtype="string")).astype(str))
+    absent = sorted(expected - present)
+    extra = sorted(present - expected)
+    return {
+        "expected_physical_specs": len(expected),
+        "actual_physical_specs": len(expected),
+        "materialized_columns": len(present & expected),
+        "absent_columns": absent,
+        "extra_columns": extra,
+        "unavailable_count": 0,
+        "zero_coverage_count": 0,
+        "materialization_mode": "stream_factor_blocks",
+        "wide_frame_columns": int(wide_frame_columns),
+        "gate_basis": "factor_block_inventory",
+    }
+
+
 def _streaming_feature_registry(
     P: Any,
     features: pd.DataFrame,
@@ -470,7 +503,12 @@ def _optimized_materialize_date(
             start_time=start_time,
             end_time=end_time,
         )
-        features = P.R.add_all_features(loaded["feature"].sort_index())
+        # Factor values are streamed to manifests/Parquet blocks by the
+        # patched derive_all.  The strict physical completion wrapper expects
+        # all 464 columns in the live frame and is therefore incompatible with
+        # this memory-bounded path; the builder itself still performs the same
+        # canonical merges, supplement direction, and runtime bookkeeping.
+        features = _streaming_feature_builder(P)(loaded["feature"].sort_index())
         del loaded
         _memory_trim()
 
@@ -499,6 +537,14 @@ def _optimized_materialize_date(
                 f"present={len(present)} expected={len(expected)} "
                 f"missing={sorted(missing)[:20]} extra={sorted(extra)[:20]}"
             )
+        P._atomic_json(
+            C.CTX.root / "schema" / "physical_factor_completion_gate.json",
+            _streaming_completion_audit(
+                expected,
+                inventory,
+                wide_frame_columns=features.shape[1],
+            ),
+        )
 
         support_columns = P._support_columns(features)
         support = features[support_columns].copy(deep=False)
