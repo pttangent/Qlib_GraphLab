@@ -12,6 +12,34 @@ import pandas as pd
 import psutil
 
 
+def _admission_cap(
+    spec: Any,
+    stage: str,
+    *,
+    usable_gb: float,
+    minimum_launch_headroom_gb: float,
+    config: Mapping[str, Any],
+) -> int:
+    """Return process queue width while leaving peak memory to its own gate."""
+    if usable_gb < minimum_launch_headroom_gb:
+        return 0
+    materialize_internal = config.get("pipeline", {}).get(
+        "materialize_internal", {}
+    )
+    if (
+        stage == "materialize"
+        and isinstance(materialize_internal, Mapping)
+        and int(materialize_internal.get("peak_slots", 0)) > 0
+        and bool(materialize_internal.get("stream_factor_blocks", False))
+    ):
+        # Date workers spend most of their lifetime waiting at the file-based
+        # peak lease. Their queue width is therefore independent of the
+        # guarded wide-merge RSS estimate; peak_slots is the memory control.
+        return int(spec.max_workers)
+    memory_cap = int(max(0.0, usable_gb) // spec.estimated_worker_gb)
+    return min(spec.max_workers, memory_cap)
+
+
 def install(P: Any) -> None:
     original_load_selected = P._load_selected_factors
     original_detailed = P.detailed_date
@@ -121,9 +149,14 @@ def install(P: Any) -> None:
         while pending or running:
             available_gb = psutil.virtual_memory().available / 1024**3
             usable_gb = max(0.0, available_gb - reserve_gb)
-            memory_cap = int(usable_gb // spec.estimated_worker_gb)
             launch_allowed = usable_gb >= minimum_launch_headroom_gb
-            cap = min(spec.max_workers, memory_cap) if launch_allowed else 0
+            cap = _admission_cap(
+                spec,
+                stage,
+                usable_gb=usable_gb,
+                minimum_launch_headroom_gb=minimum_launch_headroom_gb,
+                config=config,
+            )
             while pending and len(running) < cap:
                 trade_date = pending.pop(0)
                 attempts[trade_date] = attempts.get(trade_date, 0) + 1

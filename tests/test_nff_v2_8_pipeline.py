@@ -11,6 +11,7 @@ from nff_research import v2_8_portfolio_optimization as PORTFOLIO_OPT
 from nff_research import v2_8_screen_optimization as SCREEN_OPT
 from nff_research import v2_8_selection_tracks as TRACKS
 from nff_research import v2_8_stage_contracts as STAGE_CONTRACTS
+from nff_research import v2_8_runtime_hardening as RUNTIME_HARDENING
 from nff_research import v2_1_neutralized_runner as RUN
 
 
@@ -130,6 +131,28 @@ def test_stage_specs_are_decoupled() -> None:
     assert specs["basic_screen"].max_workers == 9
     assert specs["detailed"].estimated_worker_gb == 17
     assert specs["portfolio"].max_workers == 7
+
+
+def test_materialize_queue_width_is_decoupled_from_peak_gate() -> None:
+    spec = P.StageSpec("materialize", max_workers=8, estimated_worker_gb=16)
+    config = {
+        "pipeline": {
+            "materialize_internal": {
+                "peak_slots": 2,
+                "stream_factor_blocks": True,
+            }
+        }
+    }
+
+    cap = RUNTIME_HARDENING._admission_cap(
+        spec,
+        "materialize",
+        usable_gb=40.0,
+        minimum_launch_headroom_gb=8.0,
+        config=config,
+    )
+
+    assert cap == 8
 
 
 def test_dates_are_sorted_before_training_window_freeze(monkeypatch) -> None:

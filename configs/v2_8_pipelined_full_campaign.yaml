@@ -49,11 +49,10 @@ pipeline:
     stream_factor_blocks: true
     release_arrow_memory: true
   stages:
-    # Four date processes remain available.  A cross-process peak gate prevents
-    # all four from simultaneously reaching the observed 25-30+ GB high-water
-    # substage; completed factor blocks stream directly to checkpoint storage.
+    # Eight date processes may queue behind the two-slot high-water gate;
+    # completed factor blocks stream directly to checkpoint storage.
     materialize:
-      max_workers: 4
+      max_workers: 8
       estimated_worker_gb: 16
     # Raw screen streams eight-factor blocks and can use process-level CPU width.
     basic_screen:
