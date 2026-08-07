@@ -1,0 +1,91 @@
+{
+  "source": "C:\\NFF_research\\runs\\v2_7_atomic_benchmark_20260807_r44",
+  "completed_stage_events": [
+    {
+      "stage": "merge_supplements",
+      "elapsed_seconds": 63.140472300117835,
+      "trade_date": "2026-01-02"
+    },
+    {
+      "stage": "merge_sketch",
+      "elapsed_seconds": 17.20814020000398,
+      "trade_date": "2026-01-02"
+    },
+    {
+      "stage": "merge_condition",
+      "elapsed_seconds": 22.63964630011469,
+      "trade_date": "2026-01-02"
+    },
+    {
+      "stage": "merge_venue",
+      "elapsed_seconds": 51.10044080018997,
+      "trade_date": "2026-01-02"
+    },
+    {
+      "stage": "derive_factors",
+      "elapsed_seconds": 155.90613929997198,
+      "trade_date": "2026-01-02"
+    },
+    {
+      "stage": "ic_and_neutralization",
+      "elapsed_seconds": 2353.8142234000843,
+      "trade_date": "2026-01-02"
+    },
+    {
+      "stage": "portfolio_proxy",
+      "elapsed_seconds": 3593.0079683999065,
+      "trade_date": "2026-01-02"
+    }
+  ],
+  "summary": {
+    "derive_factors": {
+      "count": 1,
+      "total_seconds": 155.90613929997198,
+      "median_seconds": 155.90613929997198,
+      "p90_seconds": 155.90613929997198,
+      "max_seconds": 155.90613929997198
+    },
+    "ic_and_neutralization": {
+      "count": 1,
+      "total_seconds": 2353.8142234000843,
+      "median_seconds": 2353.8142234000843,
+      "p90_seconds": 2353.8142234000843,
+      "max_seconds": 2353.8142234000843
+    },
+    "merge_condition": {
+      "count": 1,
+      "total_seconds": 22.63964630011469,
+      "median_seconds": 22.63964630011469,
+      "p90_seconds": 22.63964630011469,
+      "max_seconds": 22.63964630011469
+    },
+    "merge_sketch": {
+      "count": 1,
+      "total_seconds": 17.20814020000398,
+      "median_seconds": 17.20814020000398,
+      "p90_seconds": 17.20814020000398,
+      "max_seconds": 17.20814020000398
+    },
+    "merge_supplements": {
+      "count": 1,
+      "total_seconds": 63.140472300117835,
+      "median_seconds": 63.140472300117835,
+      "p90_seconds": 63.140472300117835,
+      "max_seconds": 63.140472300117835
+    },
+    "merge_venue": {
+      "count": 1,
+      "total_seconds": 51.10044080018997,
+      "median_seconds": 51.10044080018997,
+      "p90_seconds": 51.10044080018997,
+      "max_seconds": 51.10044080018997
+    },
+    "portfolio_proxy": {
+      "count": 1,
+      "total_seconds": 3593.0079683999065,
+      "median_seconds": 3593.0079683999065,
+      "p90_seconds": 3593.0079683999065,
+      "max_seconds": 3593.0079683999065
+    }
+  }
+}

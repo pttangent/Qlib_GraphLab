@@ -1,0 +1,178 @@
+{
+  "contract_version": "v2_3_20260803_turnover_gate_label_contract_v1",
+  "created_utc": "2026-08-07T01:13:36.305562+00:00",
+  "git_commit": "9caaa5a60b88fa03bc722be39d39f1f03e2bfc80",
+  "runner_path": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_4_optimized_runner.py",
+  "runner_sha256": "287fd2813c3ed25ea4f9ee86a59a56f4a722b270184720827edec9629bdb376f",
+  "dependency_runner_path": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_multilabel_runner.py",
+  "dependency_runner_sha256": "7e229e3d60be8ae99856a574db15c1dc14702ae7eddaad6ed50e536e7c5fc497",
+  "config_sha256": "23bf713be86f014d34f2cbfa8e6f45319ed4c46764e473943864f0027402fe45",
+  "feature_registry_sha256": "5ca26d797d1808117ae351d8863c086eca07a5f0fd35c0f228f4ef1fb8a2ba30",
+  "label_contract_sha256": "ad2b8c6fe66573368e85f3c8a4ada6044925c86ecf0078097268aeaa693bf8ca",
+  "controls_path": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_research\\derived_inputs\\daily_bar_controls_v2_1\\daily_controls_2026-01-02_2026-07-22.parquet",
+  "controls_sha256": "da8325b7f853102f09f09c048263df2a7d0746a5e6bbcc25a869f2cf8d6d8719",
+  "warehouse_root": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_warehouse",
+  "session": {
+    "timezone": "America/New_York",
+    "regular_open": "09:30",
+    "regular_close_exclusive": "16:00"
+  },
+  "portfolio_accounting": "same_sleeve_turnover_with_turnover_controlled_diagnostic_variant",
+  "research_version": "2.7-real-schema-atomic",
+  "base_runner_version": "2.6-full-defined",
+  "incremental_validation": {
+    "method": "fixed_symbol_fold_cross_sectional_oof_ridge",
+    "folds": 5,
+    "fold_algorithm": "sha256_normalized_symbol_first8_big_endian_modulo",
+    "ridge_alpha": 0.001,
+    "min_train_n": 40,
+    "sample_policy": "largest_step_common_complete_case_all_steps_or_drop_minute",
+    "label_evidence_roles": {
+      "return_open_to_open": "diagnostic_execution_sensitive_return",
+      "return_vwap_to_vwap": "primary_execution_return",
+      "return_close_to_close": "diagnostic_execution_sensitive_return",
+      "liquidity_deterioration": "primary_state_prediction",
+      "realized_volatility": "primary_state_prediction",
+      "jump_tail_event": "diagnostic_jump_orthogonality",
+      "execution_cost_proxy": "diagnostic_mechanical_proxy"
+    }
+  },
+  "portfolio_policy": {
+    "primary_execution_label": "return_vwap_to_vwap",
+    "applicability": {
+      "15": [
+        15
+      ],
+      "30": [
+        15,
+        30
+      ],
+      "60": [
+        30,
+        60
+      ],
+      "120": [
+        60
+      ]
+    },
+    "accounting": "same_sleeve_turnover_with_turnover_controlled_diagnostic_variant",
+    "turnover_controlled_variant": {
+      "buffer_quantile": 0.1,
+      "min_hold_periods": 2,
+      "signal_change_threshold": 0.1,
+      "max_replacement_fraction": 0.5
+    },
+    "hawkes_stock_level_gates": [
+      "total_intensity",
+      "shock_score",
+      "endogenous_shock",
+      "exogenous_shock",
+      "persistence"
+    ],
+    "variants": [
+      "long_high_q10_15m",
+      "contrarian_q10_15m",
+      "contrarian_q05_30m",
+      "contrarian_q05_60m",
+      "contrarian_q05_30m_turnover_controlled"
+    ]
+  },
+  "effective_config": {
+    "research_version": "2.7-real-schema-atomic",
+    "base_runner_version": "2.6-full-defined",
+    "run_id": "v2_7_atomic_full_defined_20260807_r45",
+    "start_date": "2026-01-02",
+    "end_date": "2026-07-22",
+    "horizons": [
+      1,
+      5,
+      15,
+      30,
+      60
+    ],
+    "parallel": 2,
+    "max_parallel": 3,
+    "min_parallel": 1,
+    "target_cpu": 90,
+    "memory_high_water": 78,
+    "memory_min_available_gb": 32,
+    "disk_free_floor_gb": 50,
+    "launch_batch_size": 1,
+    "retries": 3,
+    "min_cs_n": 30,
+    "rebalance_minutes": 15,
+    "cost_bps_per_turnover": 1.0,
+    "allow_mixed_contracts": true,
+    "incremental_validation": {
+      "method": "fixed_symbol_fold_cross_sectional_oof_ridge",
+      "folds": 5,
+      "fold_algorithm": "sha256_normalized_symbol_first8_big_endian_modulo",
+      "ridge_alpha": 0.001,
+      "min_train_n": 40,
+      "sample_policy": "largest_step_common_complete_case_all_steps_or_drop_minute",
+      "label_evidence_roles": {
+        "return_open_to_open": "diagnostic_execution_sensitive_return",
+        "return_vwap_to_vwap": "primary_execution_return",
+        "return_close_to_close": "diagnostic_execution_sensitive_return",
+        "liquidity_deterioration": "primary_state_prediction",
+        "realized_volatility": "primary_state_prediction",
+        "jump_tail_event": "diagnostic_jump_orthogonality",
+        "execution_cost_proxy": "diagnostic_mechanical_proxy"
+      }
+    },
+    "portfolio_policy": {
+      "primary_execution_label": "return_vwap_to_vwap",
+      "applicability": {
+        "15": [
+          15
+        ],
+        "30": [
+          15,
+          30
+        ],
+        "60": [
+          30,
+          60
+        ],
+        "120": [
+          60
+        ]
+      },
+      "accounting": "same_sleeve_turnover_with_turnover_controlled_diagnostic_variant",
+      "turnover_controlled_variant": {
+        "buffer_quantile": 0.1,
+        "min_hold_periods": 2,
+        "signal_change_threshold": 0.1,
+        "max_replacement_fraction": 0.5
+      },
+      "hawkes_stock_level_gates": [
+        "total_intensity",
+        "shock_score",
+        "endogenous_shock",
+        "exogenous_shock",
+        "persistence"
+      ],
+      "variants": [
+        "long_high_q10_15m",
+        "contrarian_q10_15m",
+        "contrarian_q05_30m",
+        "contrarian_q05_60m",
+        "contrarian_q05_30m_turnover_controlled"
+      ]
+    },
+    "paths": {
+      "warehouse_root": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_warehouse",
+      "research_root": "C:\\NFF_research",
+      "raw_1m_root": "D:\\DEV\\AnotherNetworkFactory\\RAW_DATA\\1m",
+      "nodefactorfactory_src": "D:\\DEV\\AnotherNetworkFactory\\NodeFactorFactory\\src",
+      "industry_metadata": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\metadata\\symbol_metadata.parquet",
+      "controls_path": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_research\\derived_inputs\\daily_bar_controls_v2_1\\daily_controls_2026-01-02_2026-07-22.parquet"
+    },
+    "session": {
+      "timezone": "America/New_York",
+      "regular_open": "09:30",
+      "regular_close_exclusive": "16:00"
+    }
+  },
+  "run_contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31"
+}

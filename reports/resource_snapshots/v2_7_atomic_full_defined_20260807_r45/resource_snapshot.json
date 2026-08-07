@@ -1,0 +1,396 @@
+{
+  "snapshot_utc": "2026-08-07T01:33:35.123949+00:00",
+  "run_id": "v2_7_atomic_full_defined_20260807_r45",
+  "run_root": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45",
+  "status": {
+    "pid": 126428,
+    "run_id": "v2_7_atomic_full_defined_20260807_r45",
+    "out_root": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45",
+    "controls_path": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_research\\derived_inputs\\daily_bar_controls_v2_1\\daily_controls_2026-01-02_2026-07-22.parquet",
+    "started_utc": "2026-08-07T01:13:38.760852+00:00",
+    "stage": "neutralized_factor_diagnostics",
+    "status": "running",
+    "total_units": 138,
+    "completed_units": 0,
+    "parallel": 1,
+    "running_workers": 1,
+    "resources": {
+      "cpu_percent": 22.8,
+      "memory_percent": 36.5,
+      "memory_available_gb": 80.82,
+      "disk_free_gb": 367.67,
+      "worker_process_count": 2,
+      "worker_rss_total_gb": 25.256,
+      "worker_rss_max_gb": 25.247
+    },
+    "horizons": [
+      1,
+      5,
+      15,
+      30,
+      60
+    ],
+    "label_families": [
+      "return_open_to_open",
+      "return_vwap_to_vwap",
+      "return_close_to_close",
+      "liquidity_deterioration",
+      "realized_volatility",
+      "jump_tail_event",
+      "execution_cost_proxy"
+    ],
+    "run_contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
+    "effective_config": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\effective_config.json",
+    "heartbeat_utc": "2026-08-07T01:33:33.659907+00:00",
+    "running_units": [
+      {
+        "trade_date": "2026-02-04"
+      }
+    ],
+    "pending_units": 137,
+    "failure_count": 0,
+    "factor_completed": 464,
+    "factor_expected": 464,
+    "factor_progress_pct": 100.0,
+    "factor_completed_blocks": 68,
+    "factor_checkpoint_level": "family/window/factor-block",
+    "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-02-04\\factors",
+    "factor_last_event_utc": "2026-08-07T01:24:26.164590+00:00",
+    "factor_current_stage": "ic_and_neutralization",
+    "factor_current_state": "running",
+    "factor_current_family": "S",
+    "factor_current_window": "30m",
+    "factor_current_factors": 1,
+    "last_failure": {
+      "trade_date": "2026-06-01",
+      "attempt": 1,
+      "returncode": 4294967295,
+      "error": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n",
+      "stdout": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-01_attempt=1.out.log",
+      "stderr": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-01_attempt=1.err.log",
+      "healing_action": "requeued"
+    }
+  },
+  "resource_sample_count": 229,
+  "resource_summary": {
+    "cpu_percent": {
+      "count": 229,
+      "min": 12.1,
+      "median": 41.0,
+      "p90": 54.38000000000001,
+      "max": 71.7,
+      "latest": 22.8
+    },
+    "memory_percent": {
+      "count": 229,
+      "min": 21.0,
+      "median": 54.8,
+      "p90": 78.6,
+      "max": 93.1,
+      "latest": 36.5
+    },
+    "memory_available_gb": {
+      "count": 229,
+      "min": 8.8,
+      "median": 57.58,
+      "p90": 75.63800000000003,
+      "max": 100.56,
+      "latest": 80.82
+    },
+    "worker_rss_total_gb": {
+      "count": 229,
+      "min": 0.01,
+      "median": 44.276,
+      "p90": 76.80840000000002,
+      "max": 96.282,
+      "latest": 25.256
+    },
+    "worker_rss_max_gb": {
+      "count": 229,
+      "min": 0.01,
+      "median": 19.578,
+      "p90": 34.09440000000002,
+      "max": 39.394,
+      "latest": 25.247
+    },
+    "disk_free_gb": {
+      "count": 229,
+      "min": 367.67,
+      "median": 372.7,
+      "p90": 375.22,
+      "max": 375.23,
+      "latest": 367.67
+    }
+  },
+  "scheduler_tuning_count": 20,
+  "latest_scheduler_tuning": {
+    "sample_utc": "2026-08-07T01:33:33.647172+00:00",
+    "previous_parallel": 1,
+    "target_parallel": 1,
+    "reason": "awaiting_safe_streak",
+    "safe_streak": 1,
+    "running_workers": 1,
+    "resources": {
+      "cpu_percent": 22.8,
+      "memory_percent": 36.5,
+      "memory_available_gb": 80.82,
+      "disk_free_gb": 367.67,
+      "worker_process_count": 2,
+      "worker_rss_total_gb": 25.256,
+      "worker_rss_max_gb": 25.247
+    }
+  },
+  "factor_progress": [
+    {
+      "trade_date": "2026-02-04",
+      "factor_completed": 464,
+      "factor_expected": 464,
+      "factor_progress_pct": 100.0,
+      "factor_manifest_count": 32,
+      "last_stage": "ic_and_neutralization",
+      "last_state": "running"
+    },
+    {
+      "trade_date": "2026-06-01",
+      "factor_completed": 464,
+      "factor_expected": 464,
+      "factor_progress_pct": 100.0,
+      "factor_manifest_count": 32,
+      "last_stage": "ic_and_neutralization",
+      "last_state": "running"
+    },
+    {
+      "trade_date": "2026-06-09",
+      "factor_completed": 464,
+      "factor_expected": 464,
+      "factor_progress_pct": 100.0,
+      "factor_manifest_count": 32,
+      "last_stage": "ic_and_neutralization",
+      "last_state": "running"
+    }
+  ],
+  "factor_progress_summary": {
+    "dates_seen": 3,
+    "dates_factor_complete": 3,
+    "max_factor_progress_pct": 100.0
+  },
+  "stage_timing_benchmark": {
+    "source": "C:\\NFF_research\\runs\\v2_7_atomic_benchmark_20260807_r44",
+    "completed_stage_events": [
+      {
+        "stage": "merge_supplements",
+        "elapsed_seconds": 63.140472300117835,
+        "trade_date": "2026-01-02"
+      },
+      {
+        "stage": "merge_sketch",
+        "elapsed_seconds": 17.20814020000398,
+        "trade_date": "2026-01-02"
+      },
+      {
+        "stage": "merge_condition",
+        "elapsed_seconds": 22.63964630011469,
+        "trade_date": "2026-01-02"
+      },
+      {
+        "stage": "merge_venue",
+        "elapsed_seconds": 51.10044080018997,
+        "trade_date": "2026-01-02"
+      },
+      {
+        "stage": "derive_factors",
+        "elapsed_seconds": 155.90613929997198,
+        "trade_date": "2026-01-02"
+      },
+      {
+        "stage": "ic_and_neutralization",
+        "elapsed_seconds": 2353.8142234000843,
+        "trade_date": "2026-01-02"
+      },
+      {
+        "stage": "portfolio_proxy",
+        "elapsed_seconds": 3593.0079683999065,
+        "trade_date": "2026-01-02"
+      }
+    ],
+    "summary": {
+      "derive_factors": {
+        "count": 1,
+        "total_seconds": 155.90613929997198,
+        "median_seconds": 155.90613929997198,
+        "p90_seconds": 155.90613929997198,
+        "max_seconds": 155.90613929997198
+      },
+      "ic_and_neutralization": {
+        "count": 1,
+        "total_seconds": 2353.8142234000843,
+        "median_seconds": 2353.8142234000843,
+        "p90_seconds": 2353.8142234000843,
+        "max_seconds": 2353.8142234000843
+      },
+      "merge_condition": {
+        "count": 1,
+        "total_seconds": 22.63964630011469,
+        "median_seconds": 22.63964630011469,
+        "p90_seconds": 22.63964630011469,
+        "max_seconds": 22.63964630011469
+      },
+      "merge_sketch": {
+        "count": 1,
+        "total_seconds": 17.20814020000398,
+        "median_seconds": 17.20814020000398,
+        "p90_seconds": 17.20814020000398,
+        "max_seconds": 17.20814020000398
+      },
+      "merge_supplements": {
+        "count": 1,
+        "total_seconds": 63.140472300117835,
+        "median_seconds": 63.140472300117835,
+        "p90_seconds": 63.140472300117835,
+        "max_seconds": 63.140472300117835
+      },
+      "merge_venue": {
+        "count": 1,
+        "total_seconds": 51.10044080018997,
+        "median_seconds": 51.10044080018997,
+        "p90_seconds": 51.10044080018997,
+        "max_seconds": 51.10044080018997
+      },
+      "portfolio_proxy": {
+        "count": 1,
+        "total_seconds": 3593.0079683999065,
+        "median_seconds": 3593.0079683999065,
+        "p90_seconds": 3593.0079683999065,
+        "max_seconds": 3593.0079683999065
+      }
+    }
+  },
+  "worker_log_audit": {
+    "files": [
+      {
+        "path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-02-04_attempt=1.err.log",
+        "bytes": 559,
+        "has_traceback": false,
+        "has_error": false,
+        "tail": "C:\\Users\\A001\\AppData\\Roaming\\Python\\Python314\\site-packages\\pandas\\core\\arraylike.py:399: RuntimeWarning: overflow encountered in exp\n  result = getattr(ufunc, method)(*inputs, **kwargs)\nD:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n"
+      },
+      {
+        "path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-01_attempt=1.err.log",
+        "bytes": 369,
+        "has_traceback": false,
+        "has_error": false,
+        "tail": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n"
+      },
+      {
+        "path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\worker_logs\\date=2026-06-09_attempt=1.err.log",
+        "bytes": 369,
+        "has_traceback": false,
+        "has_error": false,
+        "tail": "D:\\DEV\\AnotherNetworkFactory\\Qlib_GraphLab_v2_7\\nff_research\\v2_6_full_defined_campaign.py:375: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.\n  raw_times = pd.to_datetime(raw_index.get_level_values(0), utc=True, errors=\"coerce\")\n"
+      }
+    ],
+    "nonempty_log_count": 3,
+    "traceback_or_exception_count": 0,
+    "traceback_or_exception_logs": [],
+    "warning_only_count": 3
+  },
+  "contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
+  "git_commit": "9caaa5a60b88fa03bc722be39d39f1f03e2bfc80",
+  "effective_config": {
+    "research_version": "2.7-real-schema-atomic",
+    "base_runner_version": "2.6-full-defined",
+    "run_id": "v2_7_atomic_full_defined_20260807_r45",
+    "start_date": "2026-01-02",
+    "end_date": "2026-07-22",
+    "horizons": [
+      1,
+      5,
+      15,
+      30,
+      60
+    ],
+    "parallel": 2,
+    "max_parallel": 3,
+    "min_parallel": 1,
+    "target_cpu": 90,
+    "memory_high_water": 78,
+    "memory_min_available_gb": 32,
+    "disk_free_floor_gb": 50,
+    "launch_batch_size": 1,
+    "retries": 3,
+    "min_cs_n": 30,
+    "rebalance_minutes": 15,
+    "cost_bps_per_turnover": 1.0,
+    "allow_mixed_contracts": true,
+    "incremental_validation": {
+      "method": "fixed_symbol_fold_cross_sectional_oof_ridge",
+      "folds": 5,
+      "fold_algorithm": "sha256_normalized_symbol_first8_big_endian_modulo",
+      "ridge_alpha": 0.001,
+      "min_train_n": 40,
+      "sample_policy": "largest_step_common_complete_case_all_steps_or_drop_minute",
+      "label_evidence_roles": {
+        "return_open_to_open": "diagnostic_execution_sensitive_return",
+        "return_vwap_to_vwap": "primary_execution_return",
+        "return_close_to_close": "diagnostic_execution_sensitive_return",
+        "liquidity_deterioration": "primary_state_prediction",
+        "realized_volatility": "primary_state_prediction",
+        "jump_tail_event": "diagnostic_jump_orthogonality",
+        "execution_cost_proxy": "diagnostic_mechanical_proxy"
+      }
+    },
+    "portfolio_policy": {
+      "primary_execution_label": "return_vwap_to_vwap",
+      "applicability": {
+        "15": [
+          15
+        ],
+        "30": [
+          15,
+          30
+        ],
+        "60": [
+          30,
+          60
+        ],
+        "120": [
+          60
+        ]
+      },
+      "accounting": "same_sleeve_turnover_with_turnover_controlled_diagnostic_variant",
+      "turnover_controlled_variant": {
+        "buffer_quantile": 0.1,
+        "min_hold_periods": 2,
+        "signal_change_threshold": 0.1,
+        "max_replacement_fraction": 0.5
+      },
+      "hawkes_stock_level_gates": [
+        "total_intensity",
+        "shock_score",
+        "endogenous_shock",
+        "exogenous_shock",
+        "persistence"
+      ],
+      "variants": [
+        "long_high_q10_15m",
+        "contrarian_q10_15m",
+        "contrarian_q05_30m",
+        "contrarian_q05_60m",
+        "contrarian_q05_30m_turnover_controlled"
+      ]
+    },
+    "paths": {
+      "warehouse_root": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_warehouse",
+      "research_root": "C:\\NFF_research",
+      "raw_1m_root": "D:\\DEV\\AnotherNetworkFactory\\RAW_DATA\\1m",
+      "nodefactorfactory_src": "D:\\DEV\\AnotherNetworkFactory\\NodeFactorFactory\\src",
+      "industry_metadata": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\metadata\\symbol_metadata.parquet",
+      "controls_path": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_research\\derived_inputs\\daily_bar_controls_v2_1\\daily_controls_2026-01-02_2026-07-22.parquet"
+    },
+    "session": {
+      "timezone": "America/New_York",
+      "regular_open": "09:30",
+      "regular_close_exclusive": "16:00"
+    }
+  }
+}

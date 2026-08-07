@@ -1,0 +1,14 @@
+{
+  "snapshot_utc": "2026-08-07T01:33:20Z",
+  "action": "manual_worker_drain_for_memory_safety",
+  "run_id": "v2_7_atomic_full_defined_20260807_r45",
+  "terminated_worker_pids": [70668, 40272],
+  "reason": "memory_percent exceeded 90 and available memory fell below 12 GB while three IC workers grew to roughly 94 GB RSS",
+  "parent_scheduler_preserved": true,
+  "research_contract_modified": false,
+  "checkpoint_data_deleted": false,
+  "healing_observed": "parent requeued the two interrupted dates; failure_count remained zero",
+  "post_action_memory_percent": 37.0,
+  "post_action_memory_available_gb": 80.19,
+  "post_action_worker_rss_total_gb": 26.283
+}

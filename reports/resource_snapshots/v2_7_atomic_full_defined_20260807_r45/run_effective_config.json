@@ -1,0 +1,97 @@
+{
+  "research_version": "2.7-real-schema-atomic",
+  "base_runner_version": "2.6-full-defined",
+  "run_id": "v2_7_atomic_full_defined_20260807_r45",
+  "start_date": "2026-01-02",
+  "end_date": "2026-07-22",
+  "horizons": [
+    1,
+    5,
+    15,
+    30,
+    60
+  ],
+  "parallel": 2,
+  "max_parallel": 3,
+  "min_parallel": 1,
+  "target_cpu": 90,
+  "memory_high_water": 78,
+  "memory_min_available_gb": 32,
+  "disk_free_floor_gb": 50,
+  "launch_batch_size": 1,
+  "retries": 3,
+  "min_cs_n": 30,
+  "rebalance_minutes": 15,
+  "cost_bps_per_turnover": 1.0,
+  "allow_mixed_contracts": true,
+  "incremental_validation": {
+    "method": "fixed_symbol_fold_cross_sectional_oof_ridge",
+    "folds": 5,
+    "fold_algorithm": "sha256_normalized_symbol_first8_big_endian_modulo",
+    "ridge_alpha": 0.001,
+    "min_train_n": 40,
+    "sample_policy": "largest_step_common_complete_case_all_steps_or_drop_minute",
+    "label_evidence_roles": {
+      "return_open_to_open": "diagnostic_execution_sensitive_return",
+      "return_vwap_to_vwap": "primary_execution_return",
+      "return_close_to_close": "diagnostic_execution_sensitive_return",
+      "liquidity_deterioration": "primary_state_prediction",
+      "realized_volatility": "primary_state_prediction",
+      "jump_tail_event": "diagnostic_jump_orthogonality",
+      "execution_cost_proxy": "diagnostic_mechanical_proxy"
+    }
+  },
+  "portfolio_policy": {
+    "primary_execution_label": "return_vwap_to_vwap",
+    "applicability": {
+      "15": [
+        15
+      ],
+      "30": [
+        15,
+        30
+      ],
+      "60": [
+        30,
+        60
+      ],
+      "120": [
+        60
+      ]
+    },
+    "accounting": "same_sleeve_turnover_with_turnover_controlled_diagnostic_variant",
+    "turnover_controlled_variant": {
+      "buffer_quantile": 0.1,
+      "min_hold_periods": 2,
+      "signal_change_threshold": 0.1,
+      "max_replacement_fraction": 0.5
+    },
+    "hawkes_stock_level_gates": [
+      "total_intensity",
+      "shock_score",
+      "endogenous_shock",
+      "exogenous_shock",
+      "persistence"
+    ],
+    "variants": [
+      "long_high_q10_15m",
+      "contrarian_q10_15m",
+      "contrarian_q05_30m",
+      "contrarian_q05_60m",
+      "contrarian_q05_30m_turnover_controlled"
+    ]
+  },
+  "paths": {
+    "warehouse_root": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_warehouse",
+    "research_root": "C:\\NFF_research",
+    "raw_1m_root": "D:\\DEV\\AnotherNetworkFactory\\RAW_DATA\\1m",
+    "nodefactorfactory_src": "D:\\DEV\\AnotherNetworkFactory\\NodeFactorFactory\\src",
+    "industry_metadata": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\metadata\\symbol_metadata.parquet",
+    "controls_path": "D:\\DEV\\AnotherNetworkFactory\\warehouses\\NFF_research\\derived_inputs\\daily_bar_controls_v2_1\\daily_controls_2026-01-02_2026-07-22.parquet"
+  },
+  "session": {
+    "timezone": "America/New_York",
+    "regular_open": "09:30",
+    "regular_close_exclusive": "16:00"
+  }
+}
