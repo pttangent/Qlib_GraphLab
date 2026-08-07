@@ -3,11 +3,8 @@ from __future__ import annotations
 """Production hardening for the v2.8 staged pipeline."""
 
 import gc
-import json
-import os
 from pathlib import Path
 import subprocess
-import sys
 import time
 from typing import Any, Mapping
 
@@ -90,11 +87,10 @@ def install(P: Any) -> None:
                 for date in dates
                 if date > str(meta["portfolio_eligible_after"])
             ]
-        pending = [
-            date
-            for date in dates
-            if not P._stage_success(config, stage, date).exists()
-        ]
+        # Every date gets a cheap worker-side contract verification. Existing
+        # valid outputs return immediately as skipped. This is necessary because
+        # a bare _SUCCESS marker cannot reveal source/config changes to the parent.
+        pending = list(dates)
         running: dict[str, dict[str, Any]] = {}
         failures: list[dict[str, Any]] = []
         retries = int(config["run"].get("retries", 3))
@@ -111,6 +107,7 @@ def install(P: Any) -> None:
         log_root = P._pipeline_root(config) / "worker_logs" / stage
         log_root.mkdir(parents=True, exist_ok=True)
         attempts: dict[str, int] = {}
+        verified = 0
 
         while pending or running:
             available_gb = psutil.virtual_memory().available / 1024**3
@@ -119,7 +116,7 @@ def install(P: Any) -> None:
             launch_allowed = usable_gb >= minimum_launch_headroom_gb
             cap = min(spec.max_workers, memory_cap) if launch_allowed else 0
             # Running workers are never killed merely because the instantaneous
-            # cap falls.  Admission pauses until enough memory returns.
+            # cap falls. Admission pauses until enough memory returns.
             while pending and len(running) < cap:
                 trade_date = pending.pop(0)
                 attempts[trade_date] = attempts.get(trade_date, 0) + 1
@@ -178,6 +175,8 @@ def install(P: Any) -> None:
                             / f"date={trade_date}.json",
                             failure,
                         )
+                else:
+                    verified += 1
                 finished.append(trade_date)
             for trade_date in finished:
                 running.pop(trade_date, None)
@@ -187,9 +186,10 @@ def install(P: Any) -> None:
                 {
                     "version": P.VERSION,
                     "stage": stage,
-                    "pending": len(pending),
+                    "pending_contract_checks": len(pending),
                     "running": list(running),
-                    "completed": sum(
+                    "verified_or_completed": verified,
+                    "completed_markers": sum(
                         P._stage_success(config, stage, date).exists()
                         for date in dates
                     ),
@@ -214,6 +214,7 @@ def install(P: Any) -> None:
         return {
             "stage": stage,
             "status": "partial_success" if failures else "complete",
+            "verified_or_completed": verified,
             "failures": failures,
         }
 
