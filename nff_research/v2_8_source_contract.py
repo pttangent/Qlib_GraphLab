@@ -117,12 +117,22 @@ def install(P: Any) -> None:
         _write_meta(P, meta_path, {"upstream_fingerprint": source})
         return result
 
+    def frozen_screen_dates(config: Mapping[str, Any]) -> list[str]:
+        train_days = int(config.get("selection", {}).get("train_days", 60))
+        completed = [
+            date
+            for date in P._dates(config)
+            if P._stage_success(config, "basic_screen", date).exists()
+        ]
+        return completed[:train_days]
+
     def screen_fingerprint(config: Mapping[str, Any]) -> str:
+        # Candidate selection consumes only the frozen chronological training
+        # window. Later screen dates must not change or invalidate its contract.
         paths = [
             P._stage_root(config, "basic_screen", date)
             / "basic_factor_screen.parquet"
-            for date in P._dates(config)
-            if P._stage_success(config, "basic_screen", date).exists()
+            for date in frozen_screen_dates(config)
         ]
         return _path_fingerprint(paths)
 
@@ -131,10 +141,18 @@ def install(P: Any) -> None:
         root = P._pipeline_root(config) / "selection"
         success = root / "_SUCCESS"
         meta_path = root / "meta.json"
-        if success.exists() and _read_meta(meta_path).get("screen_fingerprint") != source:
+        existing = _read_meta(meta_path)
+        if success.exists() and existing.get("screen_fingerprint") != source:
             _invalidate(success)
         result = original_select(config)
-        _write_meta(P, meta_path, {"screen_fingerprint": source})
+        _write_meta(
+            P,
+            meta_path,
+            {
+                "screen_fingerprint": source,
+                "screen_fingerprint_dates": frozen_screen_dates(config),
+            },
+        )
         return result
 
     def downstream_wrapper(
