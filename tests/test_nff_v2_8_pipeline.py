@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from nff_research import v2_8_pipeline as P
+from nff_research import v2_8_launch as LAUNCH
 
 
 def test_factor_family_and_candidate_quotas() -> None:
@@ -59,10 +60,23 @@ def test_stage_specs_are_decoupled() -> None:
     assert specs["portfolio"].max_workers == 7
 
 
+def test_runtime_hardening_is_installed_by_canonical_launcher() -> None:
+    assert LAUNCH.main is P.main
+    assert P._run_date_stage.__module__.endswith("v2_8_runtime_hardening")
+    assert P.detailed_date.__module__.endswith("v2_8_runtime_hardening")
+    assert P.portfolio_date.__module__.endswith("v2_8_runtime_hardening")
+
+
 def test_pipeline_source_contains_training_freeze_guards() -> None:
     source = __import__("pathlib").Path(P.__file__).read_text(encoding="utf-8")
+    hardening = __import__("pathlib").Path(
+        __import__("nff_research.v2_8_runtime_hardening", fromlist=["x"]).__file__
+    ).read_text(encoding="utf-8")
     assert "portfolio_eligible_after" in source
     assert "skipped_training_period" in source
     assert "direction_contract" in source
     assert "basic_screen" in source and "detailed" in source and "portfolio" in source
     assert "candidate_contract" in source
+    assert "admission_paused" in hardening
+    assert "memory_headroom" in hardening
+    assert "with_atomic_context" in hardening
