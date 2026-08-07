@@ -8,16 +8,16 @@
   "status": "running",
   "total_units": 138,
   "completed_units": 0,
-  "parallel": 1,
-  "running_workers": 1,
+  "parallel": 2,
+  "running_workers": 2,
   "resources": {
-    "cpu_percent": 15.2,
-    "memory_percent": 40.8,
-    "memory_available_gb": 75.45,
-    "disk_free_gb": 356.9,
-    "worker_process_count": 2,
-    "worker_rss_total_gb": 28.734,
-    "worker_rss_max_gb": 28.725
+    "cpu_percent": 18.4,
+    "memory_percent": 56.6,
+    "memory_available_gb": 55.31,
+    "disk_free_gb": 356.09,
+    "worker_process_count": 3,
+    "worker_rss_total_gb": 49.097,
+    "worker_rss_max_gb": 30.66
   },
   "horizons": [
     1,
@@ -37,22 +37,25 @@
   ],
   "run_contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
   "effective_config": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\effective_config.json",
-  "heartbeat_utc": "2026-08-07T02:51:49.028343+00:00",
+  "heartbeat_utc": "2026-08-07T02:55:34.280111+00:00",
   "running_units": [
     {
       "trade_date": "2026-03-03"
+    },
+    {
+      "trade_date": "2026-02-03"
     }
   ],
-  "pending_units": 137,
+  "pending_units": 136,
   "failure_count": 0,
-  "factor_completed": 464,
+  "factor_completed": 0,
   "factor_expected": 464,
-  "factor_progress_pct": 100.0,
-  "factor_completed_blocks": 68,
+  "factor_progress_pct": 0.0,
+  "factor_completed_blocks": 0,
   "factor_checkpoint_level": "family/window/factor-block",
-  "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-03-09\\factors",
-  "factor_last_event_utc": "2026-08-07T02:39:37.031428+00:00",
-  "factor_current_stage": "ic_and_neutralization",
+  "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-02-03\\factors",
+  "factor_last_event_utc": "2026-08-07T02:54:22.921585+00:00",
+  "factor_current_stage": "date",
   "factor_current_state": "running",
   "factor_current_family": "S",
   "factor_current_window": "30m",

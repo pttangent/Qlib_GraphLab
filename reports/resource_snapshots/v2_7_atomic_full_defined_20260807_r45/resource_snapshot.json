@@ -1,5 +1,5 @@
 {
-  "snapshot_utc": "2026-08-07T02:51:52.479581+00:00",
+  "snapshot_utc": "2026-08-07T02:55:37.521936+00:00",
   "run_id": "v2_7_atomic_full_defined_20260807_r45",
   "run_root": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45",
   "status": {
@@ -12,16 +12,16 @@
     "status": "running",
     "total_units": 138,
     "completed_units": 0,
-    "parallel": 1,
-    "running_workers": 1,
+    "parallel": 2,
+    "running_workers": 2,
     "resources": {
-      "cpu_percent": 15.2,
-      "memory_percent": 40.8,
-      "memory_available_gb": 75.45,
-      "disk_free_gb": 356.9,
-      "worker_process_count": 2,
-      "worker_rss_total_gb": 28.734,
-      "worker_rss_max_gb": 28.725
+      "cpu_percent": 18.4,
+      "memory_percent": 56.6,
+      "memory_available_gb": 55.31,
+      "disk_free_gb": 356.09,
+      "worker_process_count": 3,
+      "worker_rss_total_gb": 49.097,
+      "worker_rss_max_gb": 30.66
     },
     "horizons": [
       1,
@@ -41,22 +41,25 @@
     ],
     "run_contract_hash": "1df2fb50a57b8a396c043d8707137a4623f240cb11b5741a5cb0bc38430dfe31",
     "effective_config": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\effective_config.json",
-    "heartbeat_utc": "2026-08-07T02:51:49.028343+00:00",
+    "heartbeat_utc": "2026-08-07T02:55:34.280111+00:00",
     "running_units": [
       {
         "trade_date": "2026-03-03"
+      },
+      {
+        "trade_date": "2026-02-03"
       }
     ],
-    "pending_units": 137,
+    "pending_units": 136,
     "failure_count": 0,
-    "factor_completed": 464,
+    "factor_completed": 0,
     "factor_expected": 464,
-    "factor_progress_pct": 100.0,
-    "factor_completed_blocks": 68,
+    "factor_progress_pct": 0.0,
+    "factor_completed_blocks": 0,
     "factor_checkpoint_level": "family/window/factor-block",
-    "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-03-09\\factors",
-    "factor_last_event_utc": "2026-08-07T02:39:37.031428+00:00",
-    "factor_current_stage": "ic_and_neutralization",
+    "factor_progress_path": "C:\\NFF_research\\runs\\v2_7_atomic_full_defined_20260807_r45\\atomic_checkpoints\\date=2026-02-03\\factors",
+    "factor_last_event_utc": "2026-08-07T02:54:22.921585+00:00",
+    "factor_current_stage": "date",
     "factor_current_state": "running",
     "factor_current_family": "S",
     "factor_current_window": "30m",
@@ -71,93 +74,89 @@
       "healing_action": "requeued"
     }
   },
-  "resource_sample_count": 1098,
+  "resource_sample_count": 1141,
   "resource_summary": {
     "cpu_percent": {
-      "count": 1098,
-      "min": 9.3,
-      "median": 28.05,
-      "p90": 47.29000000000002,
+      "count": 1141,
+      "min": 7.2,
+      "median": 27.5,
+      "p90": 46.5,
       "max": 73.7,
-      "latest": 15.2
+      "latest": 18.4
     },
     "memory_percent": {
-      "count": 1098,
+      "count": 1141,
       "min": 17.2,
-      "median": 50.05,
-      "p90": 66.13,
+      "median": 49.8,
+      "p90": 66.0,
       "max": 93.1,
-      "latest": 40.8
+      "latest": 56.6
     },
     "memory_available_gb": {
-      "count": 1098,
+      "count": 1141,
       "min": 8.8,
-      "median": 63.58,
-      "p90": 83.36600000000004,
+      "median": 63.91,
+      "p90": 82.74,
       "max": 105.41,
-      "latest": 75.45
+      "latest": 55.31
     },
     "worker_rss_total_gb": {
-      "count": 1098,
+      "count": 1141,
       "min": 0.01,
-      "median": 40.521,
-      "p90": 61.19370000000001,
+      "median": 40.191,
+      "p90": 61.143,
       "max": 96.282,
-      "latest": 28.734
+      "latest": 49.097
     },
     "worker_rss_max_gb": {
-      "count": 1098,
+      "count": 1141,
       "min": 0.01,
-      "median": 27.548000000000002,
-      "p90": 36.9786,
+      "median": 27.906,
+      "p90": 36.827,
       "max": 43.822,
-      "latest": 28.725
+      "latest": 30.66
     },
     "disk_free_gb": {
-      "count": 1098,
-      "min": 356.89,
-      "median": 365.795,
-      "p90": 373.03,
+      "count": 1141,
+      "min": 356.09,
+      "median": 365.76,
+      "p90": 372.7,
       "max": 375.23,
-      "latest": 356.9
+      "latest": 356.09
     }
   },
-  "scheduler_tuning_count": 97,
+  "scheduler_tuning_count": 101,
   "latest_scheduler_tuning": {
-    "sample_utc": "2026-08-07T02:51:07.155474+00:00",
+    "sample_utc": "2026-08-07T02:55:18.590936+00:00",
     "previous_parallel": 2,
-    "target_parallel": 1,
-    "reason": "active_worker_drain",
-    "drain_actions": [
-      {
-        "trade_date": "2026-03-09",
-        "pid": 73452,
-        "rss_gb": 36.53,
-        "reason": "memory_guard",
-        "action": "terminate_and_requeue"
-      }
-    ],
+    "target_parallel": 2,
+    "reason": "within_target_or_limit",
+    "safe_streak": 4,
+    "running_workers": 2,
+    "stage_parallel_cap": 2,
     "active_worker_stages": {
       "dates": {
         "2026-03-03": "ic_and_neutralization",
-        "2026-03-09": "ic_and_neutralization"
+        "2026-02-03": "date"
       },
       "counts": {
-        "ic_and_neutralization": 2
+        "ic_and_neutralization": 1,
+        "date": 1
       },
       "cap_by_stage": {
+        "date": 3,
         "ic_and_neutralization": 3
       },
       "effective_cap": 2
     },
     "resources": {
-      "cpu_percent": 29.8,
-      "memory_percent": 69.5,
-      "memory_available_gb": 38.8,
-      "disk_free_gb": 356.89,
+      "cpu_percent": 12.4,
+      "memory_percent": 52.0,
+      "memory_available_gb": 61.17,
+      "disk_free_gb": 356.09,
       "worker_process_count": 3,
-      "worker_rss_total_gb": 65.269,
-      "worker_rss_max_gb": 36.531
+      "worker_rss_total_gb": 41.957,
+      "worker_rss_max_gb": 30.629
     }
   },
   "factor_progress": [
