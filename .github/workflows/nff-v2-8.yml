@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent/nff-research-pipelined-selection-v2-8
+      - agent/nff-materialize-memory-scheduler-v2-8
   pull_request:
     paths:
       - "nff_research/v2_8_*.py"
@@ -34,14 +35,16 @@ jobs:
             nff_research/v2_8_selection_tracks.py \
             nff_research/v2_8_strict_training_window.py \
             nff_research/v2_8_portfolio_optimization.py \
+            nff_research/v2_8_materialize_memory.py \
             nff_research/v2_8_source_contract.py \
             nff_research/v2_8_stage_contracts.py \
             nff_research/v2_8_bootstrap_scheduler.py \
             nff_research/v2_8_launch.py \
             tests/test_nff_v2_8_pipeline.py \
-            tests/test_nff_v2_8_bootstrap_scheduler.py
+            tests/test_nff_v2_8_bootstrap_scheduler.py \
+            tests/test_nff_v2_8_materialize_memory.py
       - name: Run v2.8 contract tests
-        run: pytest -q tests/test_nff_v2_8_pipeline.py tests/test_nff_v2_8_bootstrap_scheduler.py
+        run: pytest -q tests/test_nff_v2_8_pipeline.py tests/test_nff_v2_8_bootstrap_scheduler.py tests/test_nff_v2_8_materialize_memory.py
       - name: Static staged-DAG guards
         run: |
           python - <<'PY'
@@ -52,6 +55,7 @@ jobs:
           tracks = Path("nff_research/v2_8_selection_tracks.py").read_text(encoding="utf-8")
           strict = Path("nff_research/v2_8_strict_training_window.py").read_text(encoding="utf-8")
           portfolio_opt = Path("nff_research/v2_8_portfolio_optimization.py").read_text(encoding="utf-8")
+          materialize_memory = Path("nff_research/v2_8_materialize_memory.py").read_text(encoding="utf-8")
           source_contract = Path("nff_research/v2_8_source_contract.py").read_text(encoding="utf-8")
           stage_contracts = Path("nff_research/v2_8_stage_contracts.py").read_text(encoding="utf-8")
           bootstrap = Path("nff_research/v2_8_bootstrap_scheduler.py").read_text(encoding="utf-8")
@@ -84,6 +88,12 @@ jobs:
           assert "target_association_not_trade_direction" in tracks
           assert "exact first" in strict and "chronological" in strict
           assert "single_weight_path_expansion" in portfolio_opt
+          assert "materialize_peak_gate" in materialize_memory
+          assert "stream_to_checkpoint_no_wide_concat" in materialize_memory
+          assert "ParquetFile(path).metadata.num_rows" in materialize_memory
+          assert "return frame, runtime" in materialize_memory
+          assert "peak_slots: 1" in config
+          assert "estimated_worker_gb: 16" in config
           assert "upstream_fingerprint" in source_contract
           assert "candidate_manifest_sha256" in source_contract
           assert "screen_fingerprint_dates" in source_contract
@@ -97,6 +107,7 @@ jobs:
           assert "SELECTION_TRACKS.install(PIPELINE)" in launch
           assert "STRICT_TRAINING.install(PIPELINE)" in launch
           assert "PORTFOLIO_OPT.install(PIPELINE)" in launch
+          assert "MATERIALIZE_MEMORY.install(PIPELINE)" in launch
           assert "SOURCE_CONTRACT.install(PIPELINE)" in launch
           assert "STAGE_CONTRACTS.install(PIPELINE)" in launch
           assert "BOOTSTRAP_SCHEDULER.install(PIPELINE)" in launch
