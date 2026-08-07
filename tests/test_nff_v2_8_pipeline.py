@@ -8,6 +8,7 @@ import pytest
 from nff_research import v2_8_pipeline as P
 from nff_research import v2_8_launch as LAUNCH
 from nff_research import v2_8_portfolio_optimization as PORTFOLIO_OPT
+from nff_research import v2_8_screen_optimization as SCREEN_OPT
 from nff_research import v2_8_selection_tracks as TRACKS
 from nff_research import v2_8_stage_contracts as STAGE_CONTRACTS
 
@@ -67,6 +68,15 @@ def test_cost_scenarios_reuse_one_weight_path() -> None:
     assert set(expanded["cost_scenario_source"]) == {"single_weight_path_expansion"}
 
 
+def test_raw_screen_mask_key_reuses_equal_validity_masks() -> None:
+    first = pd.Series([True, False, True, True, False, False, True])
+    second = first.copy()
+    third = first.copy()
+    third.iloc[1] = True
+    assert SCREEN_OPT._mask_key(first) == SCREEN_OPT._mask_key(second)
+    assert SCREEN_OPT._mask_key(first) != SCREEN_OPT._mask_key(third)
+
+
 def test_default_selection_tracks_separate_alpha_and_risk() -> None:
     tracks = {item["name"]: item for item in TRACKS._track_defaults()}
     assert tracks["alpha"]["portfolio_max_features"] == 40
@@ -90,10 +100,17 @@ def test_risk_track_direction_is_not_trade_direction() -> None:
             "rank_ic_positive_ratio": [0.7, 0.8, 0.7],
         }
     )
-    track = next(item for item in TRACKS._track_defaults() if item["name"] == "risk_regime")
+    track = next(
+        item
+        for item in TRACKS._track_defaults()
+        if item["name"] == "risk_regime"
+    )
     result = TRACKS._track_summary(data, track, "final_trading_universe")
     assert len(result) == 1
-    assert result.iloc[0]["direction_semantics"] == "target_association_not_trade_direction"
+    assert (
+        result.iloc[0]["direction_semantics"]
+        == "target_association_not_trade_direction"
+    )
 
 
 def test_stage_specs_are_decoupled() -> None:
@@ -116,7 +133,11 @@ def test_stage_specs_are_decoupled() -> None:
 
 def test_stage_contracts_do_not_invalidate_materialize_for_selection_change() -> None:
     base = {
-        "run": {"start_date": "2026-01-02", "end_date": "2026-07-22", "horizons": [1, 5]},
+        "run": {
+            "start_date": "2026-01-02",
+            "end_date": "2026-07-22",
+            "horizons": [1, 5],
+        },
         "atomic": {"factor_block_size": 8},
         "local_paths": {"warehouse_root": "D:/warehouse"},
         "study": {"physical_windows": {"minute_nvg": ["10m"]}},
@@ -127,8 +148,12 @@ def test_stage_contracts_do_not_invalidate_materialize_for_selection_change() ->
     }
     changed = deepcopy(base)
     changed["selection"]["portfolio_max_features"] = 20
-    assert STAGE_CONTRACTS.contract_payload(P, base, "materialize") == STAGE_CONTRACTS.contract_payload(P, changed, "materialize")
-    assert STAGE_CONTRACTS.contract_payload(P, base, "select") != STAGE_CONTRACTS.contract_payload(P, changed, "select")
+    assert STAGE_CONTRACTS.contract_payload(
+        P, base, "materialize"
+    ) == STAGE_CONTRACTS.contract_payload(P, changed, "materialize")
+    assert STAGE_CONTRACTS.contract_payload(
+        P, base, "select"
+    ) != STAGE_CONTRACTS.contract_payload(P, changed, "select")
 
 
 def test_runtime_hardening_is_installed_by_canonical_launcher() -> None:
@@ -139,28 +164,40 @@ def test_runtime_hardening_is_installed_by_canonical_launcher() -> None:
     assert P.select_candidates.__module__.endswith("v2_8_stage_contracts")
     assert P.detailed_date.__module__.endswith("v2_8_stage_contracts")
     assert P.portfolio_date.__module__.endswith("v2_8_stage_contracts")
-    assert P._selected_portfolio_proxy.__module__.endswith("v2_8_portfolio_optimization")
+    assert P._selected_portfolio_proxy.__module__.endswith(
+        "v2_8_portfolio_optimization"
+    )
 
 
 def test_pipeline_source_contains_training_freeze_guards() -> None:
     pathlib = __import__("pathlib").Path
     source = pathlib(P.__file__).read_text(encoding="utf-8")
     hardening = pathlib(
-        __import__("nff_research.v2_8_runtime_hardening", fromlist=["x"]).__file__
+        __import__(
+            "nff_research.v2_8_runtime_hardening", fromlist=["x"]
+        ).__file__
     ).read_text(encoding="utf-8")
     source_contract = pathlib(
-        __import__("nff_research.v2_8_source_contract", fromlist=["x"]).__file__
+        __import__(
+            "nff_research.v2_8_source_contract", fromlist=["x"]
+        ).__file__
     ).read_text(encoding="utf-8")
     strict = pathlib(
-        __import__("nff_research.v2_8_strict_training_window", fromlist=["x"]).__file__
+        __import__(
+            "nff_research.v2_8_strict_training_window", fromlist=["x"]
+        ).__file__
     ).read_text(encoding="utf-8")
     tracks = pathlib(TRACKS.__file__).read_text(encoding="utf-8")
     portfolio_opt = pathlib(PORTFOLIO_OPT.__file__).read_text(encoding="utf-8")
-    stage_contracts = pathlib(STAGE_CONTRACTS.__file__).read_text(encoding="utf-8")
+    screen_opt = pathlib(SCREEN_OPT.__file__).read_text(encoding="utf-8")
+    stage_contracts = pathlib(STAGE_CONTRACTS.__file__).read_text(
+        encoding="utf-8"
+    )
     assert "portfolio_eligible_after" in source
     assert "skipped_training_period" in source
     assert "direction_contract" in source
-    assert "basic_screen" in source and "detailed" in source and "portfolio" in source
+    assert "basic_screen" in source and "detailed" in source
+    assert "portfolio" in source
     assert "candidate_contract" in source
     assert "admission_paused" in hardening
     assert "memory_headroom" in hardening
@@ -172,4 +209,5 @@ def test_pipeline_source_contains_training_freeze_guards() -> None:
     assert "only the alpha selection track may emit portfolio candidates" in tracks
     assert "target_association_not_trade_direction" in tracks
     assert "single_weight_path_expansion" in portfolio_opt
+    assert "rank-mask-cache-v2.8.1" in screen_opt
     assert "Changing a portfolio threshold must not invalidate physical factor blocks" in stage_contracts
