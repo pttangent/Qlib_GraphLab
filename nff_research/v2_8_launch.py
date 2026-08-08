@@ -14,6 +14,7 @@ from nff_research import v2_8_detailed_optimization as DETAILED_OPT
 from nff_research import v2_8_runtime_hardening as HARDENING
 from nff_research import v2_8_screen_optimization as SCREEN_OPT
 from nff_research import v2_8_selection_tracks as SELECTION_TRACKS
+from nff_research import v2_8_pit_clock as PIT_CLOCK
 from nff_research import v2_8_strict_training_window as STRICT_TRAINING
 from nff_research import v2_8_portfolio_optimization as PORTFOLIO_OPT
 from nff_research import v2_8_materialize_memory as MATERIALIZE_MEMORY
@@ -29,6 +30,9 @@ DETAILED_OPT.install(PIPELINE)
 HARDENING.install(PIPELINE)
 SCREEN_OPT.install(PIPELINE)
 SELECTION_TRACKS.install(PIPELINE)
+# Install after the multi-track selector exists so its factor-role screen can
+# be tightened, but before source/stage wrappers capture semantic contracts.
+PIT_CLOCK.install(PIPELINE)
 STRICT_TRAINING.install(PIPELINE)
 PORTFOLIO_OPT.install(PIPELINE)
 # Install before source/stage wrappers so source fingerprints and semantic
