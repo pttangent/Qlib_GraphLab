@@ -15,6 +15,7 @@ from nff_research import v2_8_runtime_hardening as HARDENING
 from nff_research import v2_8_screen_optimization as SCREEN_OPT
 from nff_research import v2_8_selection_tracks as SELECTION_TRACKS
 from nff_research import v2_8_pit_clock as PIT_CLOCK
+from nff_research import v2_8_pit_stage_contract as PIT_STAGE_CONTRACT
 from nff_research import v2_8_strict_training_window as STRICT_TRAINING
 from nff_research import v2_8_portfolio_optimization as PORTFOLIO_OPT
 from nff_research import v2_8_materialize_memory as MATERIALIZE_MEMORY
@@ -31,7 +32,8 @@ HARDENING.install(PIPELINE)
 SCREEN_OPT.install(PIPELINE)
 SELECTION_TRACKS.install(PIPELINE)
 # Install after the multi-track selector exists so its factor-role screen can
-# be tightened, but before source/stage wrappers capture semantic contracts.
+# be tightened. Runtime clock patches are applied after the original v2.7
+# bootstrap has installed its exact factor/label helpers.
 PIT_CLOCK.install(PIPELINE)
 STRICT_TRAINING.install(PIPELINE)
 PORTFOLIO_OPT.install(PIPELINE)
@@ -44,6 +46,10 @@ MATERIALIZE_MEMORY.install(PIPELINE)
 MATERIALIZE_GATE_AUDIT.install(MATERIALIZE_MEMORY, PIPELINE)
 SOURCE_CONTRACT.install(PIPELINE)
 STAGE_CONTRACTS.install(PIPELINE)
+# Stage contracts intentionally replace the generic contract function. Re-salt
+# that stage-specific hash with the PIT clock so every affected stage is
+# invalidated without coupling unrelated operational settings back together.
+PIT_STAGE_CONTRACT.install(PIPELINE)
 BOOTSTRAP_SCHEDULER.install(PIPELINE)
 main = PIPELINE.main
 
